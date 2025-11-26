@@ -196,7 +196,11 @@ function computeSummary() {
     } else if (m.direction === "OUT") {
       if (m.category === "EMILSE") {
         totalGastosEmilse += m.amount_usd;
-      } else if (m.category === "DEPTO" && gerardoId && m.contributor_id === gerardoId) {
+      } else if (
+        m.category === "DEPTO" &&
+        gerardoId &&
+        m.contributor_id === gerardoId
+      ) {
         // Gasto del depto pagado con la bolsa → baja Gerardo
         ajusteGerardo -= m.amount_usd;
       }
@@ -205,7 +209,7 @@ function computeSummary() {
 
   if (gerardoId) aportes[gerardoId] += ajusteGerardo;
 
-  const aportesEmilse = emilseId ? (aportes[emilseId] || 0) : 0;
+  const aportesEmilse = emilseId ? aportes[emilseId] || 0 : 0;
 
   let gastosParaHermanos = totalGastosEmilse - aportesEmilse;
   if (gastosParaHermanos < 0) gastosParaHermanos = 0;
@@ -280,7 +284,9 @@ app.get("/", (req, res) => {
       (c) => `
       <div class="card">
         <h3>${c.name}</h3>
-        <div class="amount neutral">${(s.aportNet[c.id] || 0).toFixed(2)} USD</div>
+        <div class="amount neutral">${(s.aportNet[c.id] || 0).toFixed(
+          2
+        )} USD</div>
         <p class="small">Aportes netos al pozo (ajustados).</p>
       </div>`
     )
@@ -288,7 +294,8 @@ app.get("/", (req, res) => {
 
   const cardsBalance = s.resumenHermanos
     .map((r) => {
-      const cls = r.saldoPozo > 0 ? "positive" : r.saldoPozo < 0 ? "negative" : "neutral";
+      const cls =
+        r.saldoPozo > 0 ? "positive" : r.saldoPozo < 0 ? "negative" : "neutral";
       const sign = r.saldoPozo >= 0 ? "+" : "";
       return `
         <div class="card">
@@ -307,14 +314,22 @@ app.get("/", (req, res) => {
 
   const rowsDiff = s.resumenHermanos
     .map((r) => {
-      const pct = Math.max(5, Math.round((Math.abs(r.diffEquidad) * 100) / maxAbs));
+      const pct = Math.max(
+        5,
+        Math.round((Math.abs(r.diffEquidad) * 100) / maxAbs)
+      );
       const cls =
-        r.diffEquidad > 0 ? "bar-positive-h" :
-        r.diffEquidad < 0 ? "bar-negative-h" : "bar-zero-h";
+        r.diffEquidad > 0
+          ? "bar-positive-h"
+          : r.diffEquidad < 0
+          ? "bar-negative-h"
+          : "bar-zero-h";
       const txt =
-        r.diffEquidad > 0 ? "Puso de más (podría recibir)" :
-        r.diffEquidad < 0 ? "Puso de menos (podría aportar)" :
-        "En línea con el promedio";
+        r.diffEquidad > 0
+          ? "Puso de más (podría recibir)"
+          : r.diffEquidad < 0
+          ? "Puso de menos (podría aportar)"
+          : "En línea con el promedio";
 
       return `
         <tr>
@@ -401,7 +416,9 @@ app.get("/", (req, res) => {
     <div class="card">
       <p>Total gastos Emilse: <b>${s.totalGastosEmilse.toFixed(2)} USD</b></p>
       <p>Aportes Emilse: <b>${s.aportesEmilse.toFixed(2)} USD</b></p>
-      <p>Gastos a cubrir entre hermanos: <b>${s.gastosParaHermanos.toFixed(2)} USD</b></p>
+      <p>Gastos a cubrir entre hermanos: <b>${s.gastosParaHermanos.toFixed(
+        2
+      )} USD</b></p>
       <p>Parte justa por hermano: <b>${s.equalShare.toFixed(2)} USD</b></p>
     </div>
 
@@ -494,7 +511,7 @@ app.get("/admin", (req, res) => {
         <input type="file" id="dbfile" name="dbfile" accept=".sqlite,.db,.sqlite3" required />
         <p class="small">
           Antes de sobrescribir se guardará una copia de seguridad de la base actual en el servidor.
-          Después de restaurar, conviene reiniciar el servicio en Render para que tome la base nueva.
+          Después de restaurar, conviene reiniciar el servicio en Render.
         </p>
         <button type="submit" style="background:#6a1b9a;">🔁 Restaurar base</button>
       </form>
@@ -558,6 +575,54 @@ app.get("/admin", (req, res) => {
 
     <h2 class="section-title">Movimientos - Depto Gerardo</h2>
     ${tablaMovAdmin(s.movsDepto)}
+
+    <script>
+      (function () {
+        var dateInput = document.querySelector('input[name="date"]');
+        var currencyInput = document.querySelector('input[name="currency"]');
+        var fxInput = document.querySelector('input[name="fx_to_usd"]');
+
+        if (!dateInput || !currencyInput || !fxInput) return;
+
+        async function cargarTCParaFecha(fechaISO) {
+          try {
+            if (!fechaISO) return;
+
+            if (currencyInput.value.toUpperCase() !== 'ARS') return;
+
+            var partes = fechaISO.split('-');
+            if (partes.length !== 3) return;
+            var fechaApi = partes[0] + '/' + partes[1] + '/' + partes[2];
+
+            var url = 'https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial/' + fechaApi;
+
+            var resp = await fetch(url);
+            if (!resp.ok) {
+              console.warn('No se pudo obtener TC para fecha', fechaISO);
+              return;
+            }
+            var data = await resp.json();
+            var q = Array.isArray(data) ? data[0] : data;
+
+            if (q && typeof q.venta === 'number') {
+              fxInput.value = q.venta.toString();
+            }
+          } catch (e) {
+            console.error('Error obteniendo TC histórico', e);
+          }
+        }
+
+        if (dateInput.value) {
+          cargarTCParaFecha(dateInput.value);
+        }
+
+        dateInput.addEventListener('change', function () {
+          if (this.value) {
+            cargarTCParaFecha(this.value);
+          }
+        });
+      })();
+    </script>
   `;
 
   res.send(renderPage({ title: "Admin", content }));
@@ -644,141 +709,20 @@ app.post("/admin/restore", upload.single("dbfile"), (req, res) => {
     fs.unlink(req.file.path, () => {});
 
     const content = `
-  <div class="flash">
-    Panel admin (acceso manual /admin). No compartas esta URL con los hermanos.
-  </div>
-
-  <h2 class="section-title">Backup</h2>
-  <div class="card">
-    <p>Podés descargar una copia completa de la base de datos actual o restaurar desde un archivo.</p>
-    <a href="/admin/backup">
-      <button>📥 Descargar base de datos</button>
-    </a>
-    <hr />
-    <form method="POST" action="/admin/restore" enctype="multipart/form-data">
-      <label for="dbfile">Restaurar base desde archivo (.sqlite / .db)</label>
-      <input type="file" id="dbfile" name="dbfile" accept=".sqlite,.db,.sqlite3" required />
-      <p class="small">
-        Antes de sobrescribir se guardará una copia de seguridad de la base actual en el servidor.
-        Después de restaurar, conviene reiniciar el servicio en Render para que tome la base nueva.
-      </p>
-      <button type="submit" style="background:#6a1b9a;">🔁 Restaurar base</button>
-    </form>
-  </div>
-
-  <h2 class="section-title">Nuevo movimiento</h2>
-  <form class="form-box" method="POST" action="/admin/movements">
-    <div class="form-row">
-      <div class="form-field">
-        <label>Fecha</label>
-        <input type="date" name="date" value="${today}" required />
+      <div class="flash">
+        La base de datos fue restaurada desde el archivo subido.<br/>
+        Se creó un backup previo en el servidor.<br/>
+        Para que la aplicación use completamente la nueva base,
+        conviene reiniciar el servicio en Render.
       </div>
-      <div class="form-field">
-        <label>Persona</label>
-        <select name="contributor_id" required>
-          ${optionsContributors}
-        </select>
-      </div>
-      <div class="form-field">
-        <label>Tipo</label>
-        <select name="direction" required>
-          <option value="IN">Ingreso</option>
-          <option value="OUT">Egreso</option>
-        </select>
-      </div>
-      <div class="form-field">
-        <label>Categoría</label>
-        <select name="category" required>
-          <option value="EMILSE">Emilse (gastos geriátrico, etc.)</option>
-          <option value="DEPTO">Depto Gerardo</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="form-row">
-      <div class="form-field">
-        <label>Monto en moneda local</label>
-        <input type="number" step="0.01" name="amount_local" required />
-      </div>
-      <div class="form-field">
-        <label>Moneda</label>
-        <input type="text" name="currency" value="ARS" required />
-      </div>
-      <div class="form-field">
-        <label>Tipo de cambio → USD</label>
-        <input type="number" step="0.0001" name="fx_to_usd" required />
-        <span class="small">
-          Monto local / este valor = monto en USD.
-        </span>
-      </div>
-    </div>
-
-    <label>Descripción</label>
-    <textarea name="description" placeholder="Ej: Pago mes geriátrico, expensas depto, etc."></textarea>
-
-    <button type="submit">Guardar movimiento</button>
-  </form>
-
-  <h2 class="section-title">Movimientos - Emilse</h2>
-  ${tablaMovAdmin(s.movsEmilse)}
-
-  <h2 class="section-title">Movimientos - Depto Gerardo</h2>
-  ${tablaMovAdmin(s.movsDepto)}
-
-  <script>
-    (function () {
-      const dateInput = document.querySelector('input[name="date"]');
-      const currencyInput = document.querySelector('input[name="currency"]');
-      const fxInput = document.querySelector('input[name="fx_to_usd"]');
-
-      if (!dateInput || !currencyInput || !fxInput) return;
-
-      async function cargarTCParaFecha(fechaISO) {
-        try {
-          if (!fechaISO) return;
-
-          // Solo autocompletamos si la moneda es ARS
-          if (currencyInput.value.toUpperCase() !== 'ARS') return;
-
-          // fechaISO viene como YYYY-MM-DD -> la API espera YYYY/MM/DD
-          var partes = fechaISO.split('-');
-          if (partes.length !== 3) return;
-          var fechaApi = partes[0] + '/' + partes[1] + '/' + partes[2];
-
-          // API de ArgentinaDatos - dólar oficial por fecha
-          var url = 'https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial/' + fechaApi;
-
-          var resp = await fetch(url);
-          if (!resp.ok) {
-            console.warn('No se pudo obtener TC para fecha', fechaISO);
-            return;
-          }
-          var data = await resp.json();
-          var q = Array.isArray(data) ? data[0] : data;
-
-          if (q && typeof q.venta === 'number') {
-            fxInput.value = q.venta.toString();
-          }
-        } catch (e) {
-          console.error('Error obteniendo TC histórico', e);
-        }
-      }
-
-      // Al cargar la página, usar la fecha actual del form:
-      if (dateInput.value) {
-        cargarTCParaFecha(dateInput.value);
-      }
-
-      // Cada vez que cambie la fecha, volvemos a consultar:
-      dateInput.addEventListener('change', function () {
-        if (this.value) {
-          cargarTCParaFecha(this.value);
-        }
-      });
-    })();
-  </script>
-`;
-
+      <p><a href="/admin">Volver al panel admin</a></p>
+    `;
+    res.send(renderPage({ title: "Restaurar base", content }));
+  } catch (err) {
+    console.error("Error restaurando base:", err);
+    res.status(500).send("Error al restaurar la base de datos.");
+  }
+});
 
 // ---- Start ----
 app.listen(PORT, () => {
