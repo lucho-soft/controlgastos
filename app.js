@@ -149,10 +149,22 @@ function initDb() {
       currency TEXT NOT NULL,
       fx_to_usd REAL NOT NULL,
       amount_usd REAL NOT NULL,
+      movement_kind TEXT NOT NULL DEFAULT 'NORMAL',
+      bank TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (contributor_id) REFERENCES contributors(id)
     )
   `).run();
+
+  // Por si la tabla ya existía antes de movement_kind / bank
+  try {
+    db.prepare(
+      `ALTER TABLE movements ADD COLUMN movement_kind TEXT NOT NULL DEFAULT 'NORMAL'`
+    ).run();
+  } catch (e) {}
+  try {
+    db.prepare(`ALTER TABLE movements ADD COLUMN bank TEXT`).run();
+  } catch (e) {}
 
   const ins = db.prepare("INSERT OR IGNORE INTO contributors (name) VALUES (?)");
   ["Gerardo", "Néstor", "Leandro", "Emilse"].forEach((n) => ins.run(n));
@@ -190,7 +202,26 @@ function computeSummary() {
   const emilse = contributors.find((c) => c.name === "Emilse");
   const emilseId = emilse?.id ?? null;
 
+  // Saldos por banco (en monto local)
+  const bankBalances = {
+    GALICIA: 0,
+    FRANCES: 0,
+  };
+
   for (const m of movements) {
+    const kind = m.movement_kind || "NORMAL";
+
+    // --- Saldos por banco (todos los movimientos con bank) ---
+    if (m.bank) {
+      const bankKey = m.bank.toUpperCase();
+      if (!bankBalances[bankKey]) bankBalances[bankKey] = 0;
+      const sign = m.direction === "IN" ? 1 : -1;
+      bankBalances[bankKey] += sign * m.amount_local;
+    }
+
+    // --- Aportes / gastos SOLO para movimientos NORMAL ---
+    if (kind !== "NORMAL") continue;
+
     if (m.direction === "IN") {
       aportes[m.contributor_id] += m.amount_usd;
     } else if (m.direction === "OUT") {
@@ -245,6 +276,7 @@ function computeSummary() {
     avgNet,
     movsEmilse: movements.filter((m) => m.category === "EMILSE"),
     movsDepto: movements.filter((m) => m.category === "DEPTO"),
+    bankBalances,
   };
 }
 
@@ -356,6 +388,7 @@ app.get("/", (req, res) => {
             <th>Persona</th>
             <th>Tipo</th>
             <th>Categoría</th>
+            <th>Banco</th>
             <th>Monto local</th>
             <th>TC → USD</th>
             <th>Monto USD</th>
@@ -374,12 +407,21 @@ app.get("/", (req, res) => {
                   ? '<span class="tag tag-emilse">Emilse</span>'
                   : '<span class="tag tag-depto">Depto Gerardo</span>';
 
+              const bankLabel = m.bank
+                ? m.bank === "GALICIA"
+                  ? "Galicia"
+                  : m.bank === "FRANCES"
+                  ? "Francés"
+                  : m.bank
+                : "-";
+
               return `
               <tr>
                 <td>${m.date}</td>
                 <td>${m.contributor_name}</td>
                 <td>${tipo}</td>
                 <td>${cat}</td>
+                <td>${bankLabel}</td>
                 <td>${m.amount_local.toFixed(2)} ${m.currency}</td>
                 <td>${m.fx_to_usd.toFixed(4)}</td>
                 <td>${m.amount_usd.toFixed(2)}</td>
@@ -389,6 +431,22 @@ app.get("/", (req, res) => {
             .join("")}
         </tbody>
       </table>`;
+
+  const bankCards = Object.entries(s.bankBalances)
+    .map(([bank, bal]) => {
+      const niceName =
+        bank === "GALICIA" ? "Banco Galicia" : bank === "FRANCES" ? "Banco Francés" : bank;
+      const cls = bal > 0 ? "positive" : bal < 0 ? "negative" : "neutral";
+      return `
+        <div class="card">
+          <h3>${niceName}</h3>
+          <div class="amount ${cls}">${bal.toFixed(
+            2
+          )} (moneda local)</div>
+          <p class="small">Saldo estimado en base a todos los movimientos.</p>
+        </div>`;
+    })
+    .join("");
 
   const content = `
     <h2 class="section-title">Aportes netos</h2>
@@ -411,6 +469,11 @@ app.get("/", (req, res) => {
         ${rowsDiff}
       </tbody>
     </table>
+
+    <h2 class="section-title">Saldos por banco</h2>
+    <div class="cards">
+      ${bankCards}
+    </div>
 
     <h2 class="section-title">Datos generales</h2>
     <div class="card">
@@ -438,7 +501,14 @@ app.get("/admin", (req, res) => {
   const contributors = s.contributors;
   const today = new Date().toISOString().slice(0, 10);
 
-  const optionsContributors = contributors
+  const emilse = contributors.find((c) => c.name === "Emilse");
+  const otros = contributors.filter((c) => c.name !== "Emilse");
+
+  let optionsContributors = "";
+  if (emilse) {
+    optionsContributors += `<option value="${emilse.id}" selected>Emilse</option>`;
+  }
+  optionsContributors += otros
     .map((c) => `<option value="${c.id}">${c.name}</option>`)
     .join("");
 
@@ -453,6 +523,7 @@ app.get("/admin", (req, res) => {
             <th>Persona</th>
             <th>Tipo</th>
             <th>Categoría</th>
+            <th>Banco</th>
             <th>Monto local</th>
             <th>TC → USD</th>
             <th>Monto USD</th>
@@ -472,12 +543,21 @@ app.get("/admin", (req, res) => {
                   ? '<span class="tag tag-emilse">Emilse</span>'
                   : '<span class="tag tag-depto">Depto Gerardo</span>';
 
+              const bankLabel = m.bank
+                ? m.bank === "GALICIA"
+                  ? "Galicia"
+                  : m.bank === "FRANCES"
+                  ? "Francés"
+                  : m.bank
+                : "-";
+
               return `
               <tr>
                 <td>${m.date}</td>
                 <td>${m.contributor_name}</td>
                 <td>${tipo}</td>
                 <td>${cat}</td>
+                <td>${bankLabel}</td>
                 <td>${m.amount_local.toFixed(2)} ${m.currency}</td>
                 <td>${m.fx_to_usd.toFixed(4)}</td>
                 <td>${m.amount_usd.toFixed(2)}</td>
@@ -494,9 +574,30 @@ app.get("/admin", (req, res) => {
         </tbody>
       </table>`;
 
+  const bankCards = Object.entries(s.bankBalances)
+    .map(([bank, bal]) => {
+      const niceName =
+        bank === "GALICIA" ? "Banco Galicia" : bank === "FRANCES" ? "Banco Francés" : bank;
+      const cls = bal > 0 ? "positive" : bal < 0 ? "negative" : "neutral";
+      return `
+        <div class="card">
+          <h3>${niceName}</h3>
+          <div class="amount ${cls}">${bal.toFixed(
+            2
+          )} (moneda local)</div>
+          <p class="small">Saldo estimado con todos los movimientos, incluyendo transferencias y ajustes.</p>
+        </div>`;
+    })
+    .join("");
+
   const content = `
     <div class="flash">
       Panel admin (acceso manual /admin). No compartas esta URL con los hermanos.
+    </div>
+
+    <h2 class="section-title">Saldos por banco</h2>
+    <div class="cards">
+      ${bankCards}
     </div>
 
     <h2 class="section-title">Backup</h2>
@@ -511,7 +612,7 @@ app.get("/admin", (req, res) => {
         <input type="file" id="dbfile" name="dbfile" accept=".sqlite,.db,.sqlite3" required />
         <p class="small">
           Antes de sobrescribir se guardará una copia de seguridad de la base actual en el servidor.
-          Después de restaurar, conviene reiniciar el servicio en Render.
+          Después de sobrescribir, conviene reiniciar el servicio.
         </p>
         <button type="submit" style="background:#6a1b9a;">🔁 Restaurar base</button>
       </form>
@@ -531,7 +632,7 @@ app.get("/admin", (req, res) => {
           </select>
         </div>
         <div class="form-field">
-          <label>Tipo</label>
+          <label>Tipo (Ingreso / Egreso)</label>
           <select name="direction" required>
             <option value="IN">Ingreso</option>
             <option value="OUT">Egreso</option>
@@ -542,6 +643,41 @@ app.get("/admin", (req, res) => {
           <select name="category" required>
             <option value="EMILSE">Emilse (gastos geriátrico, etc.)</option>
             <option value="DEPTO">Depto Gerardo</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Tipo de movimiento</label>
+          <select name="movement_kind" id="movement_kind" required>
+            <option value="NORMAL" selected>Normal (afecta pozo y hermanos)</option>
+            <option value="TRANSFER">Movimiento entre cuentas (no afecta hermanos)</option>
+            <option value="ADJUST">Ajuste de cuenta (solo corrige saldo banco)</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Banco (para NORMAL / AJUSTE)</label>
+          <select name="bank">
+            <option value="">-- Sin banco / efectivo --</option>
+            <option value="GALICIA">Galicia</option>
+            <option value="FRANCES">Francés</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Banco origen (para TRANSFER)</label>
+          <select name="bank_from">
+            <option value="">-- Seleccionar --</option>
+            <option value="GALICIA">Galicia</option>
+            <option value="FRANCES">Francés</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Banco destino (para TRANSFER)</label>
+          <select name="bank_to">
+            <option value="">-- Seleccionar --</option>
+            <option value="GALICIA">Galicia</option>
+            <option value="FRANCES">Francés</option>
           </select>
         </div>
       </div>
@@ -565,7 +701,7 @@ app.get("/admin", (req, res) => {
       </div>
 
       <label>Descripción</label>
-      <textarea name="description" placeholder="Ej: Pago mes geriátrico, expensas depto, etc."></textarea>
+      <textarea name="description" placeholder="Ej: Pago mes geriátrico, expensas depto, transferencia entre bancos, etc."></textarea>
 
       <button type="submit">Guardar movimiento</button>
     </form>
@@ -587,35 +723,56 @@ app.get("/admin", (req, res) => {
         async function cargarTCParaFecha(fechaISO) {
           try {
             if (!fechaISO) return;
-
             if (currencyInput.value.toUpperCase() !== 'ARS') return;
 
             var partes = fechaISO.split('-');
             if (partes.length !== 3) return;
             var fechaApi = partes[0] + '/' + partes[1] + '/' + partes[2];
 
-            var url = 'https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial/' + fechaApi;
+            // 1) Intento TC histórico para la fecha exacta
+            var urlFecha = 'https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial/' + fechaApi;
+            var resp = await fetch(urlFecha);
+            var q = null;
 
-            var resp = await fetch(url);
-            if (!resp.ok) {
-              console.warn('No se pudo obtener TC para fecha', fechaISO);
+            if (resp.ok) {
+              var data = await resp.json();
+              q = Array.isArray(data) ? data[0] : data;
+            }
+
+            // 2) Si no hay dato para esa fecha, uso la ÚLTIMA cotización disponible
+            if (!q || typeof q.venta !== 'number') {
+              var resp2 = await fetch('https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial');
+              if (resp2.ok) {
+                var data2 = await resp2.json();
+                var last = null;
+
+                if (Array.isArray(data2) && data2.length > 0) {
+                  last = data2[data2.length - 1]; // el último registro
+                } else if (data2 && typeof data2 === 'object') {
+                  last = data2;
+                }
+
+                if (last && typeof last.venta === 'number') {
+                  fxInput.value = String(last.venta);
+                  return;
+                }
+              }
+              console.warn('No se pudo obtener TC ni histórico ni último disponible');
               return;
             }
-            var data = await resp.json();
-            var q = Array.isArray(data) ? data[0] : data;
 
-            if (q && typeof q.venta === 'number') {
-              fxInput.value = q.venta.toString();
-            }
+            fxInput.value = String(q.venta);
           } catch (e) {
             console.error('Error obteniendo TC histórico', e);
           }
         }
 
+        // Al cargar la página, usar la fecha actual del form
         if (dateInput.value) {
           cargarTCParaFecha(dateInput.value);
         }
 
+        // Cada vez que cambie la fecha, volvemos a consultar
         dateInput.addEventListener('change', function () {
           if (this.value) {
             cargarTCParaFecha(this.value);
@@ -639,6 +796,10 @@ app.post("/admin/movements", (req, res) => {
     amount_local,
     currency,
     fx_to_usd,
+    movement_kind,
+    bank,
+    bank_from,
+    bank_to,
   } = req.body;
 
   const local = parseFloat(amount_local);
@@ -647,12 +808,78 @@ app.post("/admin/movements", (req, res) => {
     return res.status(400).send("Monto y tipo de cambio deben ser numéricos.");
   }
   const usd = local / fx;
+  const kind = movement_kind || "NORMAL";
+
+  // Transferencia entre cuentas: dos movimientos (OUT + IN) con Emilse
+  if (kind === "TRANSFER") {
+    if (!bank_from || !bank_to || bank_from === bank_to) {
+      return res
+        .status(400)
+        .send("Para una transferencia indicá banco origen y destino distintos.");
+    }
+
+    const contributors = getContributors();
+    const emilse = contributors.find((c) => c.name === "Emilse");
+    if (!emilse) {
+      return res.status(500).send("No se encontró a Emilse como contribuyente.");
+    }
+    const emilseId = emilse.id;
+
+    const baseDesc =
+      (description || "").trim() ||
+      "Transferencia entre cuentas " + bank_from + " → " + bank_to;
+
+    // Salida del banco origen
+    db.prepare(
+      `INSERT INTO movements
+       (date, contributor_id, direction, category, description,
+        amount_local, currency, fx_to_usd, amount_usd, movement_kind, bank)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      date,
+      emilseId,
+      "OUT",
+      "EMILSE",
+      baseDesc + " (origen)",
+      local,
+      currency.toUpperCase(),
+      fx,
+      usd,
+      "TRANSFER",
+      bank_from
+    );
+
+    // Entrada al banco destino
+    db.prepare(
+      `INSERT INTO movements
+       (date, contributor_id, direction, category, description,
+        amount_local, currency, fx_to_usd, amount_usd, movement_kind, bank)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      date,
+      emilseId,
+      "IN",
+      "EMILSE",
+      baseDesc + " (destino)",
+      local,
+      currency.toUpperCase(),
+      fx,
+      usd,
+      "TRANSFER",
+      bank_to
+    );
+
+    return res.redirect("/admin");
+  }
+
+  // Movimiento normal o ajuste: un solo registro
+  const usedBank = bank || "";
 
   db.prepare(
     `INSERT INTO movements
      (date, contributor_id, direction, category, description,
-      amount_local, currency, fx_to_usd, amount_usd)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      amount_local, currency, fx_to_usd, amount_usd, movement_kind, bank)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     date,
     parseInt(contributor_id),
@@ -662,7 +889,9 @@ app.post("/admin/movements", (req, res) => {
     local,
     currency.toUpperCase(),
     fx,
-    usd
+    usd,
+    kind,
+    usedBank || null
   );
 
   res.redirect("/admin");
@@ -713,7 +942,7 @@ app.post("/admin/restore", upload.single("dbfile"), (req, res) => {
         La base de datos fue restaurada desde el archivo subido.<br/>
         Se creó un backup previo en el servidor.<br/>
         Para que la aplicación use completamente la nueva base,
-        conviene reiniciar el servicio en Render.
+        conviene reiniciar el servicio (o volver a iniciar node).
       </div>
       <p><a href="/admin">Volver al panel admin</a></p>
     `;
