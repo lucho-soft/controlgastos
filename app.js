@@ -190,11 +190,16 @@ function computeSummary() {
   const contributors = getContributors();
   const movements = getMovements();
 
-  const aportes = {};
-  contributors.forEach((c) => (aportes[c.id] = 0));
+  const aportes = {};      // en USD
+  const aportePesos = {};  // en moneda local (ARS)
+  contributors.forEach((c) => {
+    aportes[c.id] = 0;
+    aportePesos[c.id] = 0;
+  });
 
   let totalGastosEmilse = 0;
-  let ajusteGerardo = 0;
+  let ajusteGerardo = 0;        // USD
+  let ajusteGerardoPesos = 0;   // ARS
 
   const gerardo = contributors.find((c) => c.name === "Gerardo");
   const gerardoId = gerardo?.id ?? null;
@@ -224,6 +229,7 @@ function computeSummary() {
 
     if (m.direction === "IN") {
       aportes[m.contributor_id] += m.amount_usd;
+      aportePesos[m.contributor_id] += m.amount_local;
     } else if (m.direction === "OUT") {
       if (m.category === "EMILSE") {
         totalGastosEmilse += m.amount_usd;
@@ -234,11 +240,15 @@ function computeSummary() {
       ) {
         // Gasto del depto pagado con la bolsa → baja Gerardo
         ajusteGerardo -= m.amount_usd;
+        ajusteGerardoPesos -= m.amount_local;
       }
     }
   }
 
-  if (gerardoId) aportes[gerardoId] += ajusteGerardo;
+  if (gerardoId) {
+    aportes[gerardoId] += ajusteGerardo;
+    aportePesos[gerardoId] += ajusteGerardoPesos;
+  }
 
   const aportesEmilse = emilseId ? aportes[emilseId] || 0 : 0;
 
@@ -256,18 +266,35 @@ function computeSummary() {
   hermanos.forEach((h) => (totalNet += aportes[h.id] || 0));
   const avgNet = totalNet / cantHermanos;
 
-  const resumenHermanos = hermanos.map((h) => ({
-    id: h.id,
-    name: h.name,
-    aport: aportes[h.id] || 0,
-    saldoPozo: (aportes[h.id] || 0) - equalShare,
-    diffEquidad: (aportes[h.id] || 0) - avgNet,
-  }));
+  const resumenHermanos = hermanos.map((h) => {
+    const apUsd = aportes[h.id] || 0;
+    const apArs = aportePesos[h.id] || 0;
+    const saldoPozoUsd = apUsd - equalShare;
+
+    let saldoPozoPesos = 0;
+    if (apUsd !== 0) {
+      const tcPromedio = apArs / apUsd; // ARS por USD
+      saldoPozoPesos = saldoPozoUsd * tcPromedio;
+    }
+
+    const diffEquidad = apUsd - avgNet;
+
+    return {
+      id: h.id,
+      name: h.name,
+      aport: apUsd,
+      aportPesos: apArs,
+      saldoPozo: saldoPozoUsd,
+      saldoPozoPesos,
+      diffEquidad,
+    };
+  });
 
   return {
     contributors,
     movements,
-    aportNet: aportes,
+    aportNet: aportes,      // USD
+    aportePesos,            // ARS
     resumenHermanos,
     totalGastosEmilse,
     aportesEmilse,
@@ -311,33 +338,48 @@ function renderPage({ title, content }) {
 app.get("/", (req, res) => {
   const s = computeSummary();
 
+  // Tarjetas de aportes: ARS grande, USD chico
   const cardsAportes = s.contributors
-    .map(
-      (c) => `
-      <div class="card">
-        <h3>${c.name}</h3>
-        <div class="amount neutral">${(s.aportNet[c.id] || 0).toFixed(
-          2
-        )} USD</div>
-        <p class="small">Aportes netos al pozo (ajustados).</p>
-      </div>`
-    )
-    .join("");
-
-  const cardsBalance = s.resumenHermanos
-    .map((r) => {
-      const cls =
-        r.saldoPozo > 0 ? "positive" : r.saldoPozo < 0 ? "negative" : "neutral";
-      const sign = r.saldoPozo >= 0 ? "+" : "";
+    .map((c) => {
+      const netUsd = s.aportNet[c.id] || 0;
+      const netArs = s.aportePesos[c.id] || 0;
       return `
         <div class="card">
-          <h3>${r.name}</h3>
-          <div class="amount ${cls}">${sign}${r.saldoPozo.toFixed(2)} USD</div>
-          <p class="small">Saldo después del reparto justo.</p>
+          <h3>${c.name}</h3>
+          <div class="amount neutral">${netArs.toFixed(2)} ARS</div>
+          <p class="small">Equivalente: ${netUsd.toFixed(2)} USD</p>
         </div>`;
     })
     .join("");
 
+  // Tarjetas de balance: saldo en ARS grande (si se puede estimar), USD chico
+  const cardsBalance = s.resumenHermanos
+    .map((r) => {
+      const cls =
+        r.saldoPozoPesos > 0
+          ? "positive"
+          : r.saldoPozoPesos < 0
+          ? "negative"
+          : "neutral";
+      const signArs = r.saldoPozoPesos >= 0 ? "+" : "";
+      const signUsd = r.saldoPozo >= 0 ? "+" : "";
+      return `
+        <div class="card">
+          <h3>${r.name}</h3>
+          <div class="amount ${cls}">${signArs}${r.saldoPozoPesos.toFixed(
+        2
+      )} ARS</div>
+          <p class="small">
+            Saldo para compensar (USD): ${signUsd}${r.saldoPozo.toFixed(
+        2
+      )} USD<br/>
+            Aporte total: ${r.aportPesos.toFixed(2)} ARS
+          </p>
+        </div>`;
+    })
+    .join("");
+
+  // Diferencias respecto al promedio (en USD, porque la equidad real es en USD)
   let maxAbs = 1;
   s.resumenHermanos.forEach((r) => {
     const abs = Math.abs(r.diffEquidad);
@@ -442,25 +484,25 @@ app.get("/", (req, res) => {
           <h3>${niceName}</h3>
           <div class="amount ${cls}">${bal.toFixed(
             2
-          )} (moneda local)</div>
+          )} ARS</div>
           <p class="small">Saldo estimado en base a todos los movimientos.</p>
         </div>`;
     })
     .join("");
 
   const content = `
-    <h2 class="section-title">Aportes netos</h2>
+    <h2 class="section-title">Aportes netos (vista en ARS)</h2>
     <div class="cards">${cardsAportes}</div>
 
     <h2 class="section-title">Balance entre hermanos</h2>
     <div class="cards">${cardsBalance}</div>
 
-    <h2 class="section-title">Diferencias respecto al promedio</h2>
+    <h2 class="section-title">Diferencias respecto al promedio (USD)</h2>
     <table>
       <thead>
         <tr>
           <th>Hermano</th>
-          <th>Diferencia</th>
+          <th>Diferencia (USD)</th>
           <th>Gráfico</th>
           <th>Comentario</th>
         </tr>
@@ -584,7 +626,7 @@ app.get("/admin", (req, res) => {
           <h3>${niceName}</h3>
           <div class="amount ${cls}">${bal.toFixed(
             2
-          )} (moneda local)</div>
+          )} ARS</div>
           <p class="small">Saldo estimado con todos los movimientos, incluyendo transferencias y ajustes.</p>
         </div>`;
     })
