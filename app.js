@@ -1,11 +1,20 @@
 const express = require("express");
 const Database = require("better-sqlite3");
 const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.urlencoded({ extended: true }));
+
+// Configuración de subida de archivos para restore
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+const upload = multer({ dest: uploadDir });
 
 // CSS embebido
 const baseStyles = `
@@ -154,11 +163,12 @@ function getContributors() {
   return db.prepare("SELECT * FROM contributors ORDER BY id").all();
 }
 function getMovements() {
+  // más reciente primero
   return db.prepare(`
     SELECT m.*, c.name AS contributor_name
     FROM movements m
     JOIN contributors c ON c.id = m.contributor_id
-    ORDER BY date ASC, m.id ASC
+    ORDER BY date DESC, m.id DESC
   `).all();
 }
 
@@ -249,7 +259,7 @@ function renderPage({ title, content }) {
           <h1>Cuenta Familiar - Emilse</h1>
           <nav>
             <a href="/">Hermanos</a>
-            <!-- Link a /admin oculto a propósito -->
+            <!-- /admin existe pero sin link directo -->
           </nav>
         </div>
         <div class="container">
@@ -404,7 +414,7 @@ app.get("/", (req, res) => {
   res.send(renderPage({ title: "Panel hermanos", content }));
 });
 
-// ---- PANEL ADMIN (la ruta sigue existiendo, pero sin link en el nav) ----
+// ---- PANEL ADMIN ----
 app.get("/admin", (req, res) => {
   const s = computeSummary();
   const contributors = s.contributors;
@@ -469,6 +479,24 @@ app.get("/admin", (req, res) => {
   const content = `
     <div class="flash">
       Panel admin (acceso manual /admin). No compartas esta URL con los hermanos.
+    </div>
+
+    <h2 class="section-title">Backup</h2>
+    <div class="card">
+      <p>Podés descargar una copia completa de la base de datos actual o restaurar desde un archivo.</p>
+      <a href="/admin/backup">
+        <button>📥 Descargar base de datos</button>
+      </a>
+      <hr />
+      <form method="POST" action="/admin/restore" enctype="multipart/form-data">
+        <label for="dbfile">Restaurar base desde archivo (.sqlite / .db)</label>
+        <input type="file" id="dbfile" name="dbfile" accept=".sqlite,.db,.sqlite3" required />
+        <p class="small">
+          Antes de sobrescribir se guardará una copia de seguridad de la base actual en el servidor.
+          Después de restaurar, conviene reiniciar el servicio en Render para que tome la base nueva.
+        </p>
+        <button type="submit" style="background:#6a1b9a;">🔁 Restaurar base</button>
+      </form>
     </div>
 
     <h2 class="section-title">Nuevo movimiento</h2>
@@ -550,38 +578,4 @@ app.post("/admin/movements", (req, res) => {
   const local = parseFloat(amount_local);
   const fx = parseFloat(fx_to_usd);
   if (!local || !fx) {
-    return res.status(400).send("Monto y tipo de cambio deben ser numéricos.");
-  }
-  const usd = local / fx;
-
-  db.prepare(
-    `INSERT INTO movements
-     (date, contributor_id, direction, category, description,
-      amount_local, currency, fx_to_usd, amount_usd)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    date,
-    parseInt(contributor_id),
-    direction,
-    category,
-    description || "",
-    local,
-    currency.toUpperCase(),
-    fx,
-    usd
-  );
-
-  res.redirect("/admin");
-});
-
-// ---- Borrar movimiento ----
-app.post("/admin/movements/:id/delete", (req, res) => {
-  const id = parseInt(req.params.id);
-  db.prepare("DELETE FROM movements WHERE id = ?").run(id);
-  res.redirect("/admin");
-});
-
-// ---- Start ----
-app.listen(PORT, () => {
-  console.log(`Servidor escuchando en http://localhost:${PORT}`);
-});
+    return res.status(400).send("Monto y tipo
