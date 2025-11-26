@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.urlencoded({ extended: true }));
 
-// Configuración de subida de archivos para restore
+// Carpeta para uploads temporales (restore)
 const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -162,8 +162,9 @@ initDb();
 function getContributors() {
   return db.prepare("SELECT * FROM contributors ORDER BY id").all();
 }
+
 function getMovements() {
-  // más reciente primero
+  // Más reciente primero
   return db.prepare(`
     SELECT m.*, c.name AS contributor_name
     FROM movements m
@@ -578,4 +579,87 @@ app.post("/admin/movements", (req, res) => {
   const local = parseFloat(amount_local);
   const fx = parseFloat(fx_to_usd);
   if (!local || !fx) {
-    return res.status(400).send("Monto y tipo
+    return res.status(400).send("Monto y tipo de cambio deben ser numéricos.");
+  }
+  const usd = local / fx;
+
+  db.prepare(
+    `INSERT INTO movements
+     (date, contributor_id, direction, category, description,
+      amount_local, currency, fx_to_usd, amount_usd)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    date,
+    parseInt(contributor_id),
+    direction,
+    category,
+    description || "",
+    local,
+    currency.toUpperCase(),
+    fx,
+    usd
+  );
+
+  res.redirect("/admin");
+});
+
+// ---- Borrar movimiento ----
+app.post("/admin/movements/:id/delete", (req, res) => {
+  const id = parseInt(req.params.id);
+  db.prepare("DELETE FROM movements WHERE id = ?").run(id);
+  res.redirect("/admin");
+});
+
+// ---- Descargar base de datos ----
+app.get("/admin/backup", (req, res) => {
+  res.download(dbFile, "familia-emilse-backup.sqlite", (err) => {
+    if (err) {
+      console.error("Error enviando backup:", err);
+      if (!res.headersSent) {
+        res.status(500).send("No se pudo descargar la base de datos.");
+      }
+    }
+  });
+});
+
+// ---- Restaurar base desde archivo ----
+app.post("/admin/restore", upload.single("dbfile"), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).send("No se recibió archivo de base de datos.");
+    }
+
+    // Backup de la base actual antes de sobrescribir
+    if (fs.existsSync(dbFile)) {
+      const backupName = `familia-emilse-before-restore-${Date.now()}.sqlite`;
+      const backupPath = path.join(__dirname, backupName);
+      fs.copyFileSync(dbFile, backupPath);
+      console.log("Backup previo creado:", backupPath);
+    }
+
+    // Copiar la base subida sobre la actual
+    fs.copyFileSync(req.file.path, dbFile);
+
+    // Borrar archivo temporal
+    fs.unlink(req.file.path, () => {});
+
+    const content = `
+      <div class="flash">
+        La base de datos fue restaurada desde el archivo subido.<br/>
+        Se creó un backup previo en el servidor.<br/>
+        Para que la aplicación use completamente la nueva base,
+        conviene reiniciar el servicio en Render.
+      </div>
+      <p><a href="/admin">Volver al panel admin</a></p>
+    `;
+    res.send(renderPage({ title: "Restaurar base", content }));
+  } catch (err) {
+    console.error("Error restaurando base:", err);
+    res.status(500).send("Error al restaurar la base de datos.");
+  }
+});
+
+// ---- Start ----
+app.listen(PORT, () => {
+  console.log(`Servidor escuchando en http://localhost:${PORT}`);
+});
