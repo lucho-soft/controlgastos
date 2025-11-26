@@ -260,7 +260,6 @@ function renderPage({ title, content, isAdmin }) {
           <h1>Cuenta Familiar - Emilse</h1>
           <nav>
             <a href="/">Hermanos</a>
-            <a href="/admin">${isAdmin ? "Admin (activo)" : "Admin"}</a>
           </nav>
         </div>
         <div class="container">
