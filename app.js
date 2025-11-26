@@ -1,5 +1,5 @@
 const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
+const Database = require("better-sqlite3");
 const path = require("path");
 
 const app = express();
@@ -8,257 +8,200 @@ const PORT = process.env.PORT || 3000;
 // Middleware para leer formularios
 app.use(express.urlencoded({ extended: true }));
 
-// CSS simple embebido
+// CSS embebido
 const baseStyles = `
   <style>
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       margin: 0;
       padding: 0;
-      background: #f4f6f9;
+      background: #f2f4f7;
       color: #222;
     }
-    header {
+    a { color: #1e88e5; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .navbar {
       background: #1e88e5;
       color: white;
-      padding: 16px 24px;
+      padding: 14px 24px;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
-    header h1 {
+    .navbar h1 {
       margin: 0;
       font-size: 1.4rem;
     }
-    header nav a {
-      color: #e3f2fd;
-      text-decoration: none;
+    .navbar nav a {
+      color: white;
       margin-left: 16px;
-      font-size: 0.9rem;
+      font-size: 0.95rem;
+      opacity: 0.95;
     }
-    header nav a:hover {
-      text-decoration: underline;
-    }
-    main {
-      padding: 24px;
+    .navbar nav a:hover { opacity: 1; }
+
+    .container {
       max-width: 1100px;
       margin: 0 auto;
+      padding: 24px;
     }
-    h2 {
+
+    .section-title {
+      font-size: 1.3rem;
       margin-top: 32px;
-      border-bottom: 1px solid #ddd;
-      padding-bottom: 4px;
-      font-size: 1.2rem;
+      margin-bottom: 12px;
+      border-left: 4px solid #1e88e5;
+      padding-left: 10px;
+      color: #333;
     }
+
     .cards {
       display: flex;
-      gap: 16px;
       flex-wrap: wrap;
-      margin-bottom: 24px;
+      gap: 16px;
     }
     .card {
-      flex: 1 1 200px;
       background: white;
-      border-radius: 8px;
+      flex: 1 1 260px;
       padding: 16px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.06);
     }
     .card h3 {
       margin-top: 0;
-      margin-bottom: 8px;
-      font-size: 1rem;
+      margin-bottom: 6px;
       color: #444;
     }
     .card .amount {
-      font-size: 1.4rem;
+      font-size: 1.6rem;
       font-weight: bold;
     }
-    .card .positive { color: #2e7d32; }
-    .card .negative { color: #c62828; }
-    .card .neutral  { color: #616161; }
+    .positive { color: #2e7d32; }
+    .negative { color: #c62828; }
+    .neutral  { color: #616161; }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 12px;
-      font-size: 0.9rem;
-      background: white;
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.04);
-    }
-    th, td {
-      padding: 8px 10px;
-      border-bottom: 1px solid #eee;
-      text-align: left;
-    }
-    th {
-      background: #e3f2fd;
-      font-weight: 600;
-      font-size: 0.9rem;
-    }
-    tr:nth-child(even) td {
-      background: #fafafa;
-    }
-    .tag {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-size: 0.75rem;
-      font-weight: 600;
-    }
-    .tag-emilse {
-      background: #e8f5e9;
-      color: #2e7d32;
-    }
-    .tag-depto {
-      background: #fff3e0;
-      color: #ef6c00;
-    }
-    .tag-in {
-      background: #e3f2fd;
-      color: #1565c0;
-    }
-    .tag-out {
-      background: #ffebee;
-      color: #c62828;
-    }
-    form {
-      background: white;
-      padding: 16px;
-      border-radius: 8px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
-      margin-top: 16px;
-      font-size: 0.9rem;
-    }
-    .form-row {
-      display: flex;
-      gap: 16px;
-      margin-bottom: 8px;
-      flex-wrap: wrap;
-    }
-    .form-field {
-      flex: 1 1 150px;
-      display: flex;
-      flex-direction: column;
-    }
-    label {
-      font-size: 0.8rem;
-      margin-bottom: 2px;
-      color: #555;
-    }
-    input[type="text"],
-    input[type="number"],
-    input[type="date"],
-    select {
-      padding: 6px 8px;
-      border-radius: 4px;
-      border: 1px solid #ccc;
-      font-size: 0.9rem;
-    }
-    textarea {
-      padding: 6px 8px;
-      border-radius: 4px;
-      border: 1px solid #ccc;
-      font-size: 0.9rem;
-      resize: vertical;
-      min-height: 40px;
-    }
-    button {
-      background: #1e88e5;
-      color: white;
-      border: none;
-      padding: 8px 16px;
-      border-radius: 4px;
-      font-size: 0.9rem;
-      cursor: pointer;
-      margin-top: 8px;
-    }
-    button:hover {
-      background: #1565c0;
-    }
     .small {
       font-size: 0.8rem;
       color: #666;
     }
-    .flash {
-      background: #e8f5e9;
-      border: 1px solid #c8e6c9;
-      color: #2e7d32;
-      padding: 8px 12px;
-      margin-bottom: 12px;
-      border-radius: 4px;
-      font-size: 0.85rem;
-    }
 
-    /* "Gráfico" de barras horizontales */
-    .balance-table {
+    table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 12px;
-      font-size: 0.85rem;
-    }
-    .balance-table th,
-    .balance-table td {
-      padding: 6px 8px;
-      border-bottom: 1px solid #eee;
-      text-align: left;
-    }
-    .balance-table th {
-      background: #e3f2fd;
-      font-weight: 600;
-    }
-    .bar-chart-container {
-      margin-top: 16px;
       background: white;
       border-radius: 8px;
-      padding: 12px 16px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
-    }
-    .bar-chart-title {
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,.05);
       font-size: 0.9rem;
-      color: #444;
-      margin: 0 0 8px 0;
     }
+    th {
+      background: #e3f2fd;
+      padding: 10px;
+      font-weight: 600;
+      color: #444;
+      text-align: left;
+    }
+    td {
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+    }
+    tr:nth-child(even) td {
+      background: #fafafa;
+    }
+
+    .tag {
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .tag-in { background:#e8f4ff; color:#1e88e5; }
+    .tag-out { background:#ffebee; color:#c62828; }
+    .tag-emilse { background:#e8f5e9; color:#2e7d32; }
+    .tag-depto { background:#fff3e0; color:#ef6c00; }
+
+    .form-box {
+      background:white;
+      padding: 20px;
+      border-radius:10px;
+      box-shadow:0 2px 8px rgba(0,0,0,.05);
+      margin-top: 16px;
+    }
+    .form-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+    .form-field {
+      flex: 1 1 200px;
+      display:flex;
+      flex-direction:column;
+    }
+    label { font-size:0.85rem; margin-bottom:4px; }
+    input, select, textarea {
+      padding: 8px;
+      font-size: 0.9rem;
+      border:1px solid #ccc;
+      border-radius:6px;
+    }
+    textarea { min-height: 60px; }
+
+    button {
+      background:#1e88e5;
+      color:white;
+      padding:10px 20px;
+      border:none;
+      border-radius:6px;
+      margin-top:10px;
+      cursor:pointer;
+      font-size:0.9rem;
+    }
+    button:hover { background:#1565c0; }
+
+    .flash {
+      background:#E8F5E9;
+      border:1px solid #C8E6C9;
+      padding:10px;
+      border-radius:6px;
+      color:#2E7D32;
+      margin-bottom:20px;
+      font-size: 0.9rem;
+    }
+
     .bar-h-container {
-      width: 100%;
-      max-width: 260px;
-      height: 10px;
-      background: #eeeeee;
+      width: 260px;
+      height: 12px;
+      background: #e0e0e0;
       border-radius: 999px;
       overflow: hidden;
-      position: relative;
     }
     .bar-h {
       height: 100%;
       border-radius: 999px;
     }
-    .bar-positive-h {
-      background: #2e7d32;
-    }
-    .bar-negative-h {
-      background: #c62828;
-    }
-    .bar-zero-h {
-      background: #bdbdbd;
-    }
+    .bar-positive-h { background:#2e7d32; }
+    .bar-negative-h { background:#c62828; }
+    .bar-zero-h { background:#9e9e9e; }
   </style>
 `;
 
-// Base de datos SQLite
+// ---- Base de datos SQLite con better-sqlite3 ----
 const dbFile = path.join(__dirname, "familia-emilse.db");
-const db = new sqlite3.Database(dbFile);
+const db = new Database(dbFile);
+db.pragma("journal_mode = WAL");
 
-// Inicializar schema y datos básicos
-db.serialize(() => {
-  db.run(`
+// Inicializar schema y datos
+function initDb() {
+  db.prepare(`
     CREATE TABLE IF NOT EXISTS contributors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT UNIQUE NOT NULL
-    );
-  `);
+    )
+  `).run();
 
-  db.run(`
+  db.prepare(`
     CREATE TABLE IF NOT EXISTS movements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       date TEXT NOT NULL,
@@ -272,138 +215,118 @@ db.serialize(() => {
       amount_usd REAL NOT NULL,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (contributor_id) REFERENCES contributors(id)
-    );
-  `);
+    )
+  `).run();
 
-  // Crear los 3 hermanos + Emilse si no existen
-  const stmt = db.prepare(`
-    INSERT OR IGNORE INTO contributors (name) VALUES (?)
-  `);
-  ["Gerardo", "Néstor", "Leandro", "Emilse"].forEach((name) => stmt.run(name));
-  stmt.finalize();
-});
+  const insertContributor = db.prepare(
+    "INSERT OR IGNORE INTO contributors (name) VALUES (?)"
+  );
+  ["Gerardo", "Néstor", "Leandro", "Emilse"].forEach((name) =>
+    insertContributor.run(name)
+  );
+}
 
-// Helpers de DB
+initDb();
+
+// Helpers DB
 function getContributors() {
-  return new Promise((resolve, reject) => {
-    db.all(`SELECT * FROM contributors ORDER BY id`, (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows);
-    });
-  });
+  return db.prepare("SELECT * FROM contributors ORDER BY id").all();
 }
 
 function getMovements() {
-  return new Promise((resolve, reject) => {
-    db.all(
-      `
-      SELECT m.*, c.name as contributor_name
-      FROM movements m
-      JOIN contributors c ON c.id = m.contributor_id
-      ORDER BY date ASC, m.id ASC
-      `,
-      (err, rows) => {
-        if (err) return reject(err);
-        resolve(rows);
-      }
-    );
-  });
+  return db
+    .prepare(
+      `SELECT m.*, c.name AS contributor_name
+       FROM movements m
+       JOIN contributors c ON c.id = m.contributor_id
+       ORDER BY date ASC, m.id ASC`
+    )
+    .all();
 }
 
-// Render genérico
+// Render base
 function renderPage({ title, content, isAdmin }) {
   return `
     <!DOCTYPE html>
     <html lang="es">
-    <head>
-      <meta charset="UTF-8" />
-      <title>${title}</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      ${baseStyles}
-    </head>
-    <body>
-      <header>
-        <h1>Cuenta familiar - Emilse</h1>
-        <nav>
-          <a href="/">Panel hermanos (lectura)</a>
-        </nav>
-      </header>
-      <main>
-        ${content}
-      </main>
-    </body>
+      <head>
+        <meta charset="UTF-8" />
+        <title>${title}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        ${baseStyles}
+      </head>
+      <body>
+        <div class="navbar">
+          <h1>Cuenta Familiar - Emilse</h1>
+          <nav>
+            <a href="/">Hermanos</a>
+            <a href="/admin">${isAdmin ? "Admin (activo)" : "Admin"}</a>
+          </nav>
+        </div>
+        <div class="container">
+          ${content}
+        </div>
+      </body>
     </html>
   `;
 }
 
-// Cálculos de balances resumen
-async function computeSummary() {
-  const contributors = await getContributors();
-  const movements = await getMovements();
+// ---- Cálculos de resumen ----
+function computeSummary() {
+  const contributors = getContributors();
+  const movements = getMovements();
 
-  // Aportes al pozo en USD (ingresos)
-  const contribsEmilse = {};
+  const aportes = {};
   contributors.forEach((c) => {
-    contribsEmilse[c.id] = 0;
+    aportes[c.id] = 0;
   });
 
   let totalGastosEmilse = 0;
-  let ajusteGerardoDepto = 0;
+  let ajusteGerardo = 0;
 
-  const gerardo = contributors.find((c) =>
-    c.name.toLowerCase().startsWith("gerardo")
+  const gerardo = contributors.find(
+    (c) => c.name.toLowerCase().startsWith("gerardo")
   );
   const gerardoId = gerardo ? gerardo.id : null;
 
   for (const m of movements) {
     if (m.direction === "IN") {
-      // Todo ingreso va a la bolsa de Emilse
-      contribsEmilse[m.contributor_id] += m.amount_usd;
+      aportes[m.contributor_id] += m.amount_usd;
     } else if (m.direction === "OUT") {
       if (m.category === "EMILSE") {
         totalGastosEmilse += m.amount_usd;
-      } else if (m.category === "DEPTO" && gerardoId) {
-        // Se paga depto con la bolsa → baja Gerardo
-        ajusteGerardoDepto -= m.amount_usd;
+      } else if (m.category === "DEPTO" && gerardoId && m.contributor_id === gerardoId) {
+        // Gasto de depto pagado con la bolsa => baja Gerardo
+        ajusteGerardo -= m.amount_usd;
       }
     }
   }
 
-  // Aportes netos (ya descontado depto de Gerardo)
-  const aportesNetPorPersona = {};
-  contributors.forEach((c) => {
-    let neto = contribsEmilse[c.id] || 0;
-    if (gerardoId && c.id === gerardoId) {
-      neto += ajusteGerardoDepto;
-    }
-    aportesNetPorPersona[c.id] = neto;
-  });
+  if (gerardoId) {
+    aportes[gerardoId] += ajusteGerardo;
+  }
 
-  // Solo hermanos para los balances entre ellos
   const hermanos = contributors.filter((c) =>
     ["Gerardo", "Néstor", "Leandro"].includes(c.name)
   );
   const cantHermanos = hermanos.length || 1;
 
-  // Parte justa de gastos de Emilse
-  const equalShareHermanos = totalGastosEmilse / cantHermanos;
+  const equalShare = totalGastosEmilse / cantHermanos;
 
-  // Promedio de aportes netos entre hermanos
   let totalNetHermanos = 0;
-  hermanos.forEach((c) => {
-    totalNetHermanos += aportesNetPorPersona[c.id] || 0;
+  hermanos.forEach((h) => {
+    totalNetHermanos += aportes[h.id] || 0;
   });
-  const avgNetHermanos = totalNetHermanos / cantHermanos;
+  const avgNet = totalNetHermanos / cantHermanos;
 
-  const resumenHermanos = hermanos.map((c) => {
-    const aportes = aportesNetPorPersona[c.id] || 0;
-    const saldoPozo = aportes - equalShareHermanos;
-    const diffEquidad = aportes - avgNetHermanos;
-
+  const resumenHermanos = hermanos.map((h) => {
+    const ap = aportes[h.id] || 0;
+    const saldoPozo = ap - equalShare;
+    const diffEquidad = ap - avgNet;
     return {
-      id: c.id,
-      name: c.name,
-      aportes,
+      id: h.id,
+      name: h.name,
+      aport: ap,
       saldoPozo,
       diffEquidad,
     };
@@ -414,109 +337,46 @@ async function computeSummary() {
 
   return {
     contributors,
-    aportesNetPorPersona,
-    hermanos,
+    movements,
+    aportNet: aportes,
     resumenHermanos,
     totalGastosEmilse,
-    equalShareHermanos,
-    avgNetHermanos,
+    equalShare,
+    avgNet,
     movsEmilse,
     movsDepto,
   };
 }
 
-// "Gráfico" de barras horizontales (balance vs promedio)
-function buildBalanceChartHtml(summary) {
-  let maxAbsDiff = 0;
-  summary.resumenHermanos.forEach((p) => {
-    const abs = Math.abs(p.diffEquidad);
-    if (abs > maxAbsDiff) maxAbsDiff = abs;
-  });
-  if (maxAbsDiff === 0) maxAbsDiff = 1;
-
-  const rowsHtml = summary.resumenHermanos
-    .map((p) => {
-      const abs = Math.abs(p.diffEquidad);
-      const widthPct = Math.max(5, Math.round((abs / maxAbsDiff) * 100));
-
-      let barClass = "bar-zero-h";
-      let desc = "En línea con el promedio";
-      if (p.diffEquidad > 1e-6) {
-        barClass = "bar-positive-h";
-        desc = "Puso de más (podría recibir)";
-      } else if (p.diffEquidad < -1e-6) {
-        barClass = "bar-negative-h";
-        desc = "Puso de menos (podría poner)";
-      }
-      const sign = p.diffEquidad >= 0 ? "+" : "";
-
-      return `
-        <tr>
-          <td>${p.name}</td>
-          <td>${sign}${p.diffEquidad.toFixed(2)} USD</td>
-          <td>
-            <div class="bar-h-container">
-              <div class="bar-h ${barClass}" style="width:${widthPct}%;"></div>
-            </div>
-          </td>
-          <td>${desc}</td>
-        </tr>
-      `;
-    })
-    .join("");
-
-  return `
-    <div class="bar-chart-container">
-      <p class="bar-chart-title">
-        Diferencia de aportes entre hermanos (en USD) respecto al promedio de aportes netos.
-      </p>
-      <table class="balance-table">
-        <thead>
-          <tr>
-            <th>Hermano</th>
-            <th>Diferencia</th>
-            <th>Gráfico</th>
-            <th>Comentario</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rowsHtml}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-// Tabla de movimientos
-function movimientosTableHtml(movs, options = {}) {
-  const { isAdmin = false } = options;
-
+// Tabla movimientos
+function movimientosTableHtml(movs, { isAdmin = false } = {}) {
   if (!movs || movs.length === 0) {
     return `<p class="small">No hay movimientos registrados todavía.</p>`;
   }
 
+  const thAcc = isAdmin ? "<th>Acciones</th>" : "";
+
   const rows = movs
     .map((m) => {
-      const tagCat =
-        m.category === "EMILSE"
-          ? '<span class="tag tag-emilse">Emilse</span>'
-          : '<span class="tag tag-depto">Depto</span>';
       const tagDir =
         m.direction === "IN"
           ? '<span class="tag tag-in">Ingreso</span>'
           : '<span class="tag tag-out">Egreso</span>';
+      const tagCat =
+        m.category === "EMILSE"
+          ? '<span class="tag tag-emilse">Emilse</span>'
+          : '<span class="tag tag-depto">Depto Gerardo</span>';
 
-      const acciones = isAdmin
+      const acc = isAdmin
         ? `
-          <td>
-            <form method="POST" action="/admin/movements/${m.id}/delete"
-                  onsubmit="return confirm('¿Seguro que querés borrar este movimiento?');">
-              <button type="submit" style="background:#c62828; margin:0; padding:4px 8px; font-size:0.8rem;">
-                Eliminar
-              </button>
-            </form>
-          </td>
-        `
+        <td>
+          <form method="POST" action="/admin/movements/${m.id}/delete"
+                onsubmit="return confirm('¿Seguro que querés borrar este movimiento?');">
+            <button type="submit" style="background:#c62828; padding:4px 10px; font-size:0.8rem; margin:0;">
+              Eliminar
+            </button>
+          </form>
+        </td>`
         : "";
 
       return `
@@ -528,14 +388,12 @@ function movimientosTableHtml(movs, options = {}) {
           <td>${m.amount_local.toFixed(2)} ${m.currency}</td>
           <td>${m.fx_to_usd.toFixed(4)}</td>
           <td>${m.amount_usd.toFixed(2)} USD</td>
-          <td>${m.description ? m.description : ""}</td>
-          ${acciones}
+          <td>${m.description || ""}</td>
+          ${acc}
         </tr>
       `;
     })
     .join("");
-
-  const thAcciones = isAdmin ? "<th>Acciones</th>" : "";
 
   return `
     <table>
@@ -549,7 +407,7 @@ function movimientosTableHtml(movs, options = {}) {
           <th>TC → USD</th>
           <th>Monto USD</th>
           <th>Descripción</th>
-          ${thAcciones}
+          ${thAcc}
         </tr>
       </thead>
       <tbody>
@@ -559,89 +417,128 @@ function movimientosTableHtml(movs, options = {}) {
   `;
 }
 
-// -------------------- Rutas --------------------
+// ---- Rutas ----
 
-// Panel hermanos (solo lectura)
-app.get("/", async (req, res) => {
+// Panel hermanos (lectura)
+app.get("/", (req, res) => {
   try {
-    const summary = await computeSummary();
+    const summary = computeSummary();
 
-    // Aportes netos (incluye Emilse)
     const cardsAportes = summary.contributors
       .map((c) => {
-        const neto = summary.aportesNetPorPersona[c.id] || 0;
+        const net = summary.aportNet[c.id] || 0;
         return `
           <div class="card">
             <h3>${c.name}</h3>
-            <div class="amount neutral">
-              ${neto.toFixed(2)} USD
-            </div>
-            <div class="small">
-              Aportes netos al pozo de Emilse (ingresos menos ajustes por depto, si corresponde).
-            </div>
+            <div class="amount neutral">${net.toFixed(2)} USD</div>
+            <p class="small">Aportes netos al pozo de Emilse.</p>
           </div>
         `;
       })
       .join("");
 
-    // Balance por hermano (saldo en bolsa + diferencia vs promedio)
-    const cardsBalanceHermanos = summary.resumenHermanos
-      .map((p) => {
-        let clsSaldo = "neutral";
-        if (p.saldoPozo > 1e-6) clsSaldo = "positive";
-        else if (p.saldoPozo < -1e-6) clsSaldo = "negative";
-
-        let clsDiff = "neutral";
-        if (p.diffEquidad > 1e-6) clsDiff = "positive";
-        else if (p.diffEquidad < -1e-6) clsDiff = "negative";
-
-        const signSaldo = p.saldoPozo >= 0 ? "+" : "";
-        const signDiff = p.diffEquidad >= 0 ? "+" : "";
-
+    const cardsBalance = summary.resumenHermanos
+      .map((r) => {
+        const saldo = r.saldoPozo;
+        const cls = saldo > 0 ? "positive" : saldo < 0 ? "negative" : "neutral";
+        const sign = saldo >= 0 ? "+" : "";
         return `
           <div class="card">
-            <h3>${p.name}</h3>
-            <div class="amount ${clsSaldo}">
-              ${signSaldo}${p.saldoPozo.toFixed(2)} USD
-            </div>
-            <div class="small">
-              Saldo en la bolsa (aportes netos - gastos Emilse): ${signSaldo}${p.saldoPozo.toFixed(2)} USD<br/>
-              Aportes netos totales: ${p.aportes.toFixed(2)} USD<br/>
-              Diferencia vs promedio de aportes netos entre hermanos: 
-              <span class="${clsDiff}">${signDiff}${p.diffEquidad.toFixed(2)} USD</span>
-            </div>
+            <h3>${r.name}</h3>
+            <div class="amount ${cls}">${sign}${saldo.toFixed(2)} USD</div>
+            <p class="small">
+              Aportes netos totales: ${r.aport.toFixed(2)} USD<br>
+              Saldo luego de repartir gastos de Emilse.
+            </p>
           </div>
         `;
       })
       .join("");
 
-    const balanceChartHtml = buildBalanceChartHtml(summary);
+    // tabla de diferencias vs promedio
+    let maxAbs = 0;
+    summary.resumenHermanos.forEach((r) => {
+      const abs = Math.abs(r.diffEquidad);
+      if (abs > maxAbs) maxAbs = abs;
+    });
+    if (maxAbs === 0) maxAbs = 1;
+
+    const rowsDiff = summary.resumenHermanos
+      .map((r) => {
+        const diff = r.diffEquidad;
+        const abs = Math.abs(diff);
+        const pct = Math.max(5, Math.round((abs * 100) / maxAbs));
+        let cls = "bar-zero-h";
+        let txt = "En línea con el promedio";
+        if (diff > 0) {
+          cls = "bar-positive-h";
+          txt = "Puso de más (podría recibir)";
+        } else if (diff < 0) {
+          cls = "bar-negative-h";
+          txt = "Puso de menos (podría poner)";
+        }
+        const diffTxt = `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}`;
+        return `
+          <tr>
+            <td>${r.name}</td>
+            <td>${diffTxt} USD</td>
+            <td>
+              <div class="bar-h-container">
+                <div class="bar-h ${cls}" style="width:${pct}%;"></div>
+              </div>
+            </td>
+            <td>${txt}</td>
+          </tr>
+        `;
+      })
+      .join("");
 
     const tablaEmilse = movimientosTableHtml(summary.movsEmilse);
     const tablaDepto = movimientosTableHtml(summary.movsDepto);
 
     const content = `
-      <h2>Aportes netos al pozo (en USD)</h2>
+      <h2 class="section-title">Aportes netos (USD)</h2>
       <div class="cards">
         ${cardsAportes}
       </div>
 
-      <h2>Balance entre hermanos (en USD)</h2>
+      <h2 class="section-title">Balance entre hermanos</h2>
       <div class="cards">
-        ${cardsBalanceHermanos}
-      </div>
-      ${balanceChartHtml}
-      <div class="small">
-        Total gastos Emilse: <strong>${summary.totalGastosEmilse.toFixed(2)} USD</strong> &mdash;
-        Parte justa por hermano (solo Gerardo, Néstor y Leandro): 
-        <strong>${summary.equalShareHermanos.toFixed(2)} USD</strong><br/>
-        Promedio de aportes netos entre hermanos: <strong>${summary.avgNetHermanos.toFixed(2)} USD</strong>
+        ${cardsBalance}
       </div>
 
-      <h2>Movimientos - Emilse</h2>
+      <h3 class="section-title">Diferencias respecto al promedio de aportes netos</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Hermano</th>
+            <th>Diferencia</th>
+            <th>Gráfico</th>
+            <th>Comentario</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsDiff}
+        </tbody>
+      </table>
+
+      <h3 class="section-title">Datos generales</h3>
+      <div class="card">
+        <p>Total gastos Emilse: <strong>${summary.totalGastosEmilse.toFixed(
+          2
+        )} USD</strong></p>
+        <p>Parte justa por hermano: <strong>${summary.equalShare.toFixed(
+          2
+        )} USD</strong></p>
+        <p>Promedio aportes netos: <strong>${summary.avgNet.toFixed(
+          2
+        )} USD</strong></p>
+      </div>
+
+      <h2 class="section-title">Movimientos - Emilse</h2>
       ${tablaEmilse}
 
-      <h2>Movimientos - Depto Gerardo</h2>
+      <h2 class="section-title">Movimientos - Depto Gerardo</h2>
       ${tablaDepto}
     `;
 
@@ -653,115 +550,95 @@ app.get("/", async (req, res) => {
 });
 
 // Panel admin
-app.get("/admin", async (req, res) => {
+app.get("/admin", (req, res) => {
   try {
-    const summary = await computeSummary();
+    const summary = computeSummary();
     const contributors = summary.contributors;
-
-    const cardsAportes = contributors
-      .map((c) => {
-        const neto = summary.aportesNetPorPersona[c.id] || 0;
-        return `
-          <div class="card">
-            <h3>${c.name}</h3>
-            <div class="amount neutral">
-              ${neto.toFixed(2)} USD
-            </div>
-            <div class="small">
-              Aportes netos al pozo de Emilse.
-            </div>
-          </div>
-        `;
-      })
-      .join("");
-
-    const cardsBalanceHermanos = summary.resumenHermanos
-      .map((p) => {
-        let clsSaldo = "neutral";
-        if (p.saldoPozo > 1e-6) clsSaldo = "positive";
-        else if (p.saldoPozo < -1e-6) clsSaldo = "negative";
-
-        let clsDiff = "neutral";
-        if (p.diffEquidad > 1e-6) clsDiff = "positive";
-        else if (p.diffEquidad < -1e-6) clsDiff = "negative";
-
-        const signSaldo = p.saldoPozo >= 0 ? "+" : "";
-        const signDiff = p.diffEquidad >= 0 ? "+" : "";
-
-        return `
-          <div class="card">
-            <h3>${p.name}</h3>
-            <div class="amount ${clsSaldo}">
-              ${signSaldo}${p.saldoPozo.toFixed(2)} USD
-            </div>
-            <div class="small">
-              Saldo en la bolsa (aportes netos - gastos Emilse): ${signSaldo}${p.saldoPozo.toFixed(2)} USD<br/>
-              Aportes netos totales: ${p.aportes.toFixed(2)} USD<br/>
-              Diferencia vs promedio de aportes netos entre hermanos: 
-              <span class="${clsDiff}">${signDiff}${p.diffEquidad.toFixed(2)} USD</span>
-            </div>
-          </div>
-        `;
-      })
-      .join("");
-
-    const balanceChartHtml = buildBalanceChartHtml(summary);
 
     const optionsContributors = contributors
       .map((c) => `<option value="${c.id}">${c.name}</option>`)
       .join("");
 
-    const tablaEmilse = movimientosTableHtml(summary.movsEmilse, { isAdmin: true });
-    const tablaDepto = movimientosTableHtml(summary.movsDepto, { isAdmin: true });
+    const cardsAportes = contributors
+      .map((c) => {
+        const net = summary.aportNet[c.id] || 0;
+        return `
+          <div class="card">
+            <h3>${c.name}</h3>
+            <div class="amount neutral">${net.toFixed(2)} USD</div>
+            <p class="small">Aportes netos al pozo de Emilse.</p>
+          </div>
+        `;
+      })
+      .join("");
+
+    const cardsBalance = summary.resumenHermanos
+      .map((r) => {
+        const saldo = r.saldoPozo;
+        const cls = saldo > 0 ? "positive" : saldo < 0 ? "negative" : "neutral";
+        const sign = saldo >= 0 ? "+" : "";
+        return `
+          <div class="card">
+            <h3>${r.name}</h3>
+            <div class="amount ${cls}">${sign}${saldo.toFixed(2)} USD</div>
+            <p class="small">
+              Aportes netos totales: ${r.aport.toFixed(2)} USD<br>
+              Saldo luego de repartir gastos de Emilse.
+            </p>
+          </div>
+        `;
+      })
+      .join("");
+
+    const tablaEmilse = movimientosTableHtml(summary.movsEmilse, {
+      isAdmin: true,
+    });
+    const tablaDepto = movimientosTableHtml(summary.movsDepto, {
+      isAdmin: true,
+    });
 
     const today = new Date().toISOString().slice(0, 10);
 
     const content = `
       <div class="flash">
-        Este panel es solo para carga y borrado de movimientos. Compartí con los hermanos únicamente la URL del panel de lectura.
+        Este panel es solo para carga y borrado de movimientos.
+        Compartí con la familia solo la URL del panel de hermanos.
       </div>
 
-      <h2>Aportes netos al pozo (en USD)</h2>
+      <h2 class="section-title">Aportes netos (USD)</h2>
       <div class="cards">
         ${cardsAportes}
       </div>
 
-      <h2>Balance entre hermanos (en USD)</h2>
+      <h2 class="section-title">Balance entre hermanos</h2>
       <div class="cards">
-        ${cardsBalanceHermanos}
-      </div>
-      ${balanceChartHtml}
-      <div class="small">
-        Total gastos Emilse: <strong>${summary.totalGastosEmilse.toFixed(2)} USD</strong> &mdash;
-        Parte justa por hermano (solo Gerardo, Néstor y Leandro): 
-        <strong>${summary.equalShareHermanos.toFixed(2)} USD</strong><br/>
-        Promedio de aportes netos entre hermanos: <strong>${summary.avgNetHermanos.toFixed(2)} USD</strong>
+        ${cardsBalance}
       </div>
 
-      <h2>Cargar nuevo movimiento</h2>
-      <form method="POST" action="/admin/movements">
+      <h2 class="section-title">Cargar nuevo movimiento</h2>
+      <form method="POST" action="/admin/movements" class="form-box">
         <div class="form-row">
           <div class="form-field">
             <label for="date">Fecha</label>
-            <input type="date" id="date" name="date" value="${today}" required>
+            <input type="date" id="date" name="date" value="${today}" required />
           </div>
           <div class="form-field">
             <label for="contributor_id">Quién pone / paga</label>
-            <select name="contributor_id" id="contributor_id" required>
+            <select id="contributor_id" name="contributor_id" required>
               ${optionsContributors}
             </select>
           </div>
           <div class="form-field">
-            <label for="direction">Tipo de movimiento</label>
-            <select name="direction" id="direction" required>
-              <option value="IN">Ingreso (aporta plata al pozo)</option>
+            <label for="direction">Tipo</label>
+            <select id="direction" name="direction" required>
+              <option value="IN">Ingreso (aporta al pozo)</option>
               <option value="OUT">Egreso (se paga algo)</option>
             </select>
           </div>
           <div class="form-field">
             <label for="category">Categoría</label>
-            <select name="category" id="category" required>
-              <option value="EMILSE">Emilse (geriátrico y gastos asociados)</option>
+            <select id="category" name="category" required>
+              <option value="EMILSE">Emilse (geriátrico y asociados)</option>
               <option value="DEPTO">Depto Gerardo</option>
             </select>
           </div>
@@ -770,40 +647,41 @@ app.get("/admin", async (req, res) => {
         <div class="form-row">
           <div class="form-field">
             <label for="amount_local">Monto en moneda local</label>
-            <input type="number" step="0.01" name="amount_local" id="amount_local" required>
+            <input type="number" step="0.01" id="amount_local" name="amount_local" required />
           </div>
           <div class="form-field">
-            <label for="currency">Moneda (ej: ARS, EUR, USD)</label>
-            <input type="text" name="currency" id="currency" value="ARS" required>
+            <label for="currency">Moneda</label>
+            <input type="text" id="currency" name="currency" value="ARS" required />
           </div>
           <div class="form-field">
             <label for="fx_to_usd">Tipo de cambio → USD</label>
-            <input type="number" step="0.0001" name="fx_to_usd" id="fx_to_usd" required>
+            <input type="number" step="0.0001" id="fx_to_usd" name="fx_to_usd" required />
             <span class="small">
-              Monto local dividido por este valor = USD.<br>
-              Ejemplo: si son ARS y 1 USD = 1000 ARS, escribí <strong>1000</strong>.
+              Monto local dividido por este valor = USD.<br />
+              Ej: si 1 USD = 1000 ARS, escribí 1000.
             </span>
           </div>
         </div>
 
         <div class="form-row">
           <div class="form-field">
-            <label for="description">Descripción / detalle</label>
-            <textarea name="description" id="description" placeholder="Ej: Gerardo envía euros, se convierten a pesos y se destinan 70% Emilse, 30% depto"></textarea>
+            <label for="description">Descripción</label>
+            <textarea id="description" name="description"
+              placeholder="Ej: Gerardo envía euros, se convierten a pesos..."></textarea>
           </div>
         </div>
 
         <button type="submit">Guardar movimiento</button>
       </form>
 
-      <h2>Movimientos - Emilse</h2>
+      <h2 class="section-title">Movimientos - Emilse</h2>
       ${tablaEmilse}
 
-      <h2>Movimientos - Depto Gerardo</h2>
+      <h2 class="section-title">Movimientos - Depto Gerardo</h2>
       ${tablaDepto}
 
       <script>
-        // Autocompletar tipo de cambio con dólar oficial venta (DolarApi)
+        // Autocompletar tipo de cambio desde dolarapi.com, solo en el navegador
         (async function () {
           try {
             const currencyInput = document.getElementById('currency');
@@ -813,20 +691,18 @@ app.get("/admin", async (req, res) => {
             const resp = await fetch('https://dolarapi.com/v1/dolares/oficial');
             if (!resp.ok) return;
             const data = await resp.json();
-
             if (data && typeof data.venta === 'number') {
               if (currencyInput.value.toUpperCase() === 'ARS') {
                 fxInput.value = data.venta;
               }
               const hint = document.createElement('div');
               hint.className = 'small';
-              hint.textContent =
-                'TC sugerido (dólar oficial venta): $' + data.venta +
-                ' ARS por USD – podés modificarlo si usaste otro valor o moneda.';
+              hint.textContent = 'TC sugerido dólar oficial venta: $' + data.venta +
+                                 ' ARS por USD (podés modificarlo).';
               fxInput.parentElement.appendChild(hint);
             }
           } catch (e) {
-            console.error('No se pudo obtener el tipo de cambio automático', e);
+            console.error('No se pudo obtener TC automático', e);
           }
         })();
       </script>
@@ -841,35 +717,33 @@ app.get("/admin", async (req, res) => {
 
 // Crear movimiento
 app.post("/admin/movements", (req, res) => {
-  const {
-    date,
-    contributor_id,
-    direction,
-    category,
-    description,
-    amount_local,
-    currency,
-    fx_to_usd,
-  } = req.body;
+  try {
+    const {
+      date,
+      contributor_id,
+      direction,
+      category,
+      description,
+      amount_local,
+      currency,
+      fx_to_usd,
+    } = req.body;
 
-  const amountLocalNum = parseFloat(amount_local);
-  const fxNum = parseFloat(fx_to_usd);
+    const amountLocalNum = parseFloat(amount_local);
+    const fxNum = parseFloat(fx_to_usd);
 
-  if (!amountLocalNum || !fxNum) {
-    return res.status(400).send("Monto y tipo de cambio deben ser numéricos.");
-  }
+    if (!amountLocalNum || !fxNum) {
+      return res.status(400).send("Monto y tipo de cambio deben ser numéricos.");
+    }
 
-  const amountUsd = amountLocalNum / fxNum;
+    const amountUsd = amountLocalNum / fxNum;
 
-  const sql = `
-    INSERT INTO movements
-    (date, contributor_id, direction, category, description, amount_local, currency, fx_to_usd, amount_usd)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-
-  db.run(
-    sql,
-    [
+    db.prepare(
+      `INSERT INTO movements
+       (date, contributor_id, direction, category, description,
+        amount_local, currency, fx_to_usd, amount_usd)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
       date,
       parseInt(contributor_id, 10),
       direction,
@@ -878,33 +752,29 @@ app.post("/admin/movements", (req, res) => {
       amountLocalNum,
       currency.toUpperCase(),
       fxNum,
-      amountUsd,
-    ],
-    (err) => {
-      if (err) {
-        console.error(err);
-        return res.status(500).send("Error al guardar el movimiento.");
-      }
-      res.redirect("/admin");
-    }
-  );
+      amountUsd
+    );
+
+    res.redirect("/admin");
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Error al guardar el movimiento.");
+  }
 });
 
 // Borrar movimiento
 app.post("/admin/movements/:id/delete", (req, res) => {
-  const id = parseInt(req.params.id, 10);
-
-  if (!id) {
-    return res.status(400).send("ID de movimiento inválido.");
-  }
-
-  db.run("DELETE FROM movements WHERE id = ?", [id], (err) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).send("Error al borrar el movimiento.");
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) {
+      return res.status(400).send("ID inválido.");
     }
+    db.prepare("DELETE FROM movements WHERE id = ?").run(id);
     res.redirect("/admin");
-  });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Error al borrar el movimiento.");
+  }
 });
 
 // Arrancar servidor
