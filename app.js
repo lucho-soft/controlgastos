@@ -190,33 +190,45 @@ function computeSummary() {
   const contributors = getContributors();
   const movements = getMovements();
 
-  const aportes = {};      // en USD
-  const aportePesos = {};  // en moneda local (ARS)
+  const aporteUsd = {};
+  const aportePesos = {};
+  const balanceUsd = {};
+
   contributors.forEach((c) => {
-    aportes[c.id] = 0;
+    aporteUsd[c.id] = 0;
     aportePesos[c.id] = 0;
+    balanceUsd[c.id] = 0;
   });
-
-  let totalGastosEmilse = 0;
-  let ajusteGerardo = 0;        // USD
-  let ajusteGerardoPesos = 0;   // ARS
-
-  const gerardo = contributors.find((c) => c.name === "Gerardo");
-  const gerardoId = gerardo?.id ?? null;
 
   const emilse = contributors.find((c) => c.name === "Emilse");
   const emilseId = emilse?.id ?? null;
+  const gerardo = contributors.find((c) => c.name === "Gerardo");
+  const gerardoId = gerardo?.id ?? null;
+  const hermanos = contributors.filter((c) =>
+    ["Gerardo", "Néstor", "Leandro"].includes(c.name)
+  );
 
-  // Saldos por banco (en monto local)
   const bankBalances = {
     GALICIA: 0,
     FRANCES: 0,
+    EFECTIVO: 0,
   };
 
-  for (const m of movements) {
+  let totalGastosEmilse = 0;
+  const usoEmilse = {
+    fromEmilse: 0,
+    fromBrothers: 0,
+    perBrother: {},
+  };
+
+  const sortedMovs = [...movements].sort((a, b) => {
+    if (a.date === b.date) return a.id - b.id;
+    return a.date.localeCompare(b.date);
+  });
+
+  for (const m of sortedMovs) {
     const kind = m.movement_kind || "NORMAL";
 
-    // --- Saldos por banco (todos los movimientos con bank) ---
     if (m.bank) {
       const bankKey = m.bank.toUpperCase();
       if (!bankBalances[bankKey]) bankBalances[bankKey] = 0;
@@ -224,83 +236,81 @@ function computeSummary() {
       bankBalances[bankKey] += sign * m.amount_local;
     }
 
-    // --- Aportes / gastos SOLO para movimientos NORMAL ---
     if (kind !== "NORMAL") continue;
 
+    const usd = m.amount_usd;
+
     if (m.direction === "IN") {
-      aportes[m.contributor_id] += m.amount_usd;
+      aporteUsd[m.contributor_id] += usd;
       aportePesos[m.contributor_id] += m.amount_local;
-    } else if (m.direction === "OUT") {
-      if (m.category === "EMILSE") {
-        totalGastosEmilse += m.amount_usd;
-      } else if (
-        m.category === "DEPTO" &&
-        gerardoId &&
-        m.contributor_id === gerardoId
-      ) {
-        // Gasto del depto pagado con la bolsa → baja Gerardo
-        ajusteGerardo -= m.amount_usd;
-        ajusteGerardoPesos -= m.amount_local;
+      balanceUsd[m.contributor_id] += usd;
+      continue;
+    }
+
+    if (m.direction === "OUT" && m.category === "EMILSE") {
+      totalGastosEmilse += usd;
+
+      let restante = usd;
+
+      if (emilseId) {
+        const disponibleEmilse = Math.max(balanceUsd[emilseId], 0);
+        const usaEmilse = Math.min(disponibleEmilse, restante);
+        balanceUsd[emilseId] -= usaEmilse;
+        restante -= usaEmilse;
+        usoEmilse.fromEmilse += usaEmilse;
       }
+
+      if (restante > 0 && hermanos.length > 0) {
+        const parte = restante / hermanos.length;
+        hermanos.forEach((h) => {
+          balanceUsd[h.id] -= parte;
+          usoEmilse.fromBrothers += parte;
+          usoEmilse.perBrother[h.id] = (usoEmilse.perBrother[h.id] || 0) + parte;
+        });
+      }
+      continue;
+    }
+
+    if (m.direction === "OUT" && m.category === "DEPTO" && gerardoId) {
+      balanceUsd[gerardoId] -= usd;
+      aporteUsd[gerardoId] -= usd;
+      aportePesos[gerardoId] -= m.amount_local;
     }
   }
-
-  if (gerardoId) {
-    aportes[gerardoId] += ajusteGerardo;
-    aportePesos[gerardoId] += ajusteGerardoPesos;
-  }
-
-  const aportesEmilse = emilseId ? aportes[emilseId] || 0 : 0;
-
-  let gastosParaHermanos = totalGastosEmilse - aportesEmilse;
-  if (gastosParaHermanos < 0) gastosParaHermanos = 0;
-
-  const hermanos = contributors.filter((c) =>
-    ["Gerardo", "Néstor", "Leandro"].includes(c.name)
-  );
-  const cantHermanos = hermanos.length || 1;
-
-  const equalShare = gastosParaHermanos / cantHermanos;
-
-  let totalNet = 0;
-  hermanos.forEach((h) => (totalNet += aportes[h.id] || 0));
-  const avgNet = totalNet / cantHermanos;
 
   const resumenHermanos = hermanos.map((h) => {
-    const apUsd = aportes[h.id] || 0;
+    const apUsd = aporteUsd[h.id] || 0;
     const apArs = aportePesos[h.id] || 0;
-    const saldoPozoUsd = apUsd - equalShare;
-
-    let saldoPozoPesos = 0;
-    if (apUsd !== 0) {
-      const tcPromedio = apArs / apUsd; // ARS por USD
-      saldoPozoPesos = saldoPozoUsd * tcPromedio;
-    }
-
-    const diffEquidad = apUsd - avgNet;
-
+    const balUsd = balanceUsd[h.id] || 0;
+    const rate = apUsd > 0 ? apArs / apUsd : 0;
     return {
       id: h.id,
       name: h.name,
       aport: apUsd,
       aportPesos: apArs,
-      saldoPozo: saldoPozoUsd,
-      saldoPozoPesos,
-      diffEquidad,
+      saldoPozo: balUsd,
+      saldoPozoPesos: balUsd * rate,
     };
   });
+
+  const emilseBalanceUsd = emilseId ? balanceUsd[emilseId] : 0;
+  const hermanosBalanceUsd = hermanos.reduce(
+    (acc, h) => acc + (balanceUsd[h.id] || 0),
+    0
+  );
 
   return {
     contributors,
     movements,
-    aportNet: aportes,      // USD
-    aportePesos,            // ARS
+    aportNet: aporteUsd,
+    aportePesos,
     resumenHermanos,
+    balanceUsd,
+    emilseBalanceUsd,
+    hermanosBalanceUsd,
+    totalPozoUsd: emilseBalanceUsd + hermanosBalanceUsd,
     totalGastosEmilse,
-    aportesEmilse,
-    gastosParaHermanos,
-    equalShare,
-    avgNet,
+    usoEmilse,
     movsEmilse: movements.filter((m) => m.category === "EMILSE"),
     movsDepto: movements.filter((m) => m.category === "DEPTO"),
     bankBalances,
@@ -338,86 +348,51 @@ function renderPage({ title, content }) {
 app.get("/", (req, res) => {
   const s = computeSummary();
 
-  // Tarjetas de aportes: ARS grande, USD chico
-  const cardsAportes = s.contributors
+  const totalPozoUsd = s.totalPozoUsd;
+  const cardsBalances = s.contributors
     .map((c) => {
-      const netUsd = s.aportNet[c.id] || 0;
-      const netArs = s.aportePesos[c.id] || 0;
+      const balUsd = s.balanceUsd[c.id] || 0;
+      const aportUsd = s.aportNet[c.id] || 0;
+      const aportArs = s.aportePesos[c.id] || 0;
+      const rate = aportUsd > 0 ? aportArs / aportUsd : 0;
+      const balArs = balUsd * rate;
+      const cls = balUsd > 0 ? "positive" : balUsd < 0 ? "negative" : "neutral";
+      const rateTxt = rate > 0 ? `${rate.toFixed(2)} ARS/USD promedio` : "Sin TC estimado";
       return `
         <div class="card">
           <h3>${c.name}</h3>
-          <div class="amount neutral">${netArs.toFixed(2)} ARS</div>
-          <p class="small">Equivalente: ${netUsd.toFixed(2)} USD</p>
+          <div class="amount ${cls}">${balUsd.toFixed(2)} USD</div>
+          <p class="small">Saldo estimado en ARS: ${balArs.toFixed(2)}<br/>${rateTxt}</p>
+          <p class="small">Aportes netos: ${aportUsd.toFixed(2)} USD (${aportArs.toFixed(2)} ARS)</p>
         </div>`;
     })
     .join("");
 
-  // Tarjetas de balance: saldo en ARS grande (si se puede estimar), USD chico
-  const cardsBalance = s.resumenHermanos
-    .map((r) => {
-      const cls =
-        r.saldoPozoPesos > 0
-          ? "positive"
-          : r.saldoPozoPesos < 0
-          ? "negative"
-          : "neutral";
-      const signArs = r.saldoPozoPesos >= 0 ? "+" : "";
-      const signUsd = r.saldoPozo >= 0 ? "+" : "";
+  const bankCards = Object.entries(s.bankBalances)
+    .map(([bank, bal]) => {
+      const niceName =
+        bank === "GALICIA"
+          ? "Banco Galicia"
+          : bank === "FRANCES"
+          ? "Banco Francés"
+          : "Efectivo";
+      const cls = bal > 0 ? "positive" : bal < 0 ? "negative" : "neutral";
       return `
         <div class="card">
-          <h3>${r.name}</h3>
-          <div class="amount ${cls}">${signArs}${r.saldoPozoPesos.toFixed(
-        2
-      )} ARS</div>
-          <p class="small">
-            Saldo para compensar (USD): ${signUsd}${r.saldoPozo.toFixed(
-        2
-      )} USD<br/>
-            Aporte total: ${r.aportPesos.toFixed(2)} ARS
-          </p>
+          <h3>${niceName}</h3>
+          <div class="amount ${cls}">${bal.toFixed(2)} ARS</div>
+          <p class="small">Incluye ingresos, egresos, transferencias y ajustes.</p>
         </div>`;
     })
     .join("");
 
-  // Diferencias respecto al promedio (en USD, porque la equidad real es en USD)
-  let maxAbs = 1;
-  s.resumenHermanos.forEach((r) => {
-    const abs = Math.abs(r.diffEquidad);
-    if (abs > maxAbs) maxAbs = abs;
-  });
-
-  const rowsDiff = s.resumenHermanos
-    .map((r) => {
-      const pct = Math.max(
-        5,
-        Math.round((Math.abs(r.diffEquidad) * 100) / maxAbs)
-      );
-      const cls =
-        r.diffEquidad > 0
-          ? "bar-positive-h"
-          : r.diffEquidad < 0
-          ? "bar-negative-h"
-          : "bar-zero-h";
-      const txt =
-        r.diffEquidad > 0
-          ? "Puso de más (podría recibir)"
-          : r.diffEquidad < 0
-          ? "Puso de menos (podría aportar)"
-          : "En línea con el promedio";
-
-      return `
-        <tr>
-          <td>${r.name}</td>
-          <td>${r.diffEquidad.toFixed(2)} USD</td>
-          <td>
-            <div class="bar-h-container">
-              <div class="bar-h ${cls}" style="width:${pct}%;"></div>
-            </div>
-          </td>
-          <td>${txt}</td>
-        </tr>`;
+  const usoHermanos = Object.entries(s.usoEmilse.perBrother)
+    .map(([id, val]) => {
+      const hermano = s.contributors.find((c) => c.id === Number(id));
+      const nombre = hermano ? hermano.name : "Hermano";
+      return `<li>${nombre}: ${val.toFixed(2)} USD</li>`;
     })
-    .join("");
+    .join("") || "<li>No hubo gastos cargados a hermanos</li>";
 
   const tablaMovimientos = (movs) =>
     movs.length === 0
@@ -432,7 +407,6 @@ app.get("/", (req, res) => {
             <th>Categoría</th>
             <th>Banco</th>
             <th>Monto local</th>
-            <th>TC → USD</th>
             <th>Monto USD</th>
             <th>Descripción</th>
           </tr>
@@ -454,7 +428,7 @@ app.get("/", (req, res) => {
                   ? "Galicia"
                   : m.bank === "FRANCES"
                   ? "Francés"
-                  : m.bank
+                  : "Efectivo"
                 : "-";
 
               return `
@@ -465,7 +439,6 @@ app.get("/", (req, res) => {
                 <td>${cat}</td>
                 <td>${bankLabel}</td>
                 <td>${m.amount_local.toFixed(2)} ${m.currency}</td>
-                <td>${m.fx_to_usd.toFixed(4)}</td>
                 <td>${m.amount_usd.toFixed(2)}</td>
                 <td>${m.description || ""}</td>
               </tr>`;
@@ -474,68 +447,39 @@ app.get("/", (req, res) => {
         </tbody>
       </table>`;
 
-  const bankCards = Object.entries(s.bankBalances)
-    .map(([bank, bal]) => {
-      const niceName =
-        bank === "GALICIA" ? "Banco Galicia" : bank === "FRANCES" ? "Banco Francés" : bank;
-      const cls = bal > 0 ? "positive" : bal < 0 ? "negative" : "neutral";
-      return `
-        <div class="card">
-          <h3>${niceName}</h3>
-          <div class="amount ${cls}">${bal.toFixed(
-            2
-          )} ARS</div>
-          <p class="small">Saldo estimado en base a todos los movimientos.</p>
-        </div>`;
-    })
-    .join("");
+  const recientes = tablaMovimientos(s.movements.slice(0, 15));
 
   const content = `
-    <h2 class="section-title">Aportes netos (vista en ARS)</h2>
-    <div class="cards">${cardsAportes}</div>
+    <h2 class="section-title">Pozo actual</h2>
+    <div class="cards">
+      <div class="card">
+        <h3>Saldo total</h3>
+        <div class="amount neutral">${totalPozoUsd.toFixed(2)} USD</div>
+        <p class="small">Emilse: ${s.emilseBalanceUsd.toFixed(2)} USD</p>
+        <p class="small">Hermanos: ${s.hermanosBalanceUsd.toFixed(2)} USD</p>
+      </div>
+      <div class="card">
+        <h3>Gastos de Emilse</h3>
+        <div class="amount negative">${s.totalGastosEmilse.toFixed(2)} USD</div>
+        <p class="small">Cubierto con reservas de Emilse: ${s.usoEmilse.fromEmilse.toFixed(2)} USD</p>
+        <p class="small">Cubierto por hermanos: ${s.usoEmilse.fromBrothers.toFixed(2)} USD</p>
+        <ul class="small">${usoHermanos}</ul>
+      </div>
+    </div>
 
-    <h2 class="section-title">Balance entre hermanos</h2>
-    <div class="cards">${cardsBalance}</div>
-
-    <h2 class="section-title">Diferencias respecto al promedio (USD)</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Hermano</th>
-          <th>Diferencia (USD)</th>
-          <th>Gráfico</th>
-          <th>Comentario</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rowsDiff}
-      </tbody>
-    </table>
+    <h2 class="section-title">Saldos individuales (pozo + ajustes)</h2>
+    <div class="cards">${cardsBalances}</div>
 
     <h2 class="section-title">Saldos por banco</h2>
-    <div class="cards">
-      ${bankCards}
-    </div>
+    <div class="cards">${bankCards}</div>
 
-    <h2 class="section-title">Datos generales</h2>
-    <div class="card">
-      <p>Total gastos Emilse: <b>${s.totalGastosEmilse.toFixed(2)} USD</b></p>
-      <p>Aportes Emilse: <b>${s.aportesEmilse.toFixed(2)} USD</b></p>
-      <p>Gastos a cubrir entre hermanos: <b>${s.gastosParaHermanos.toFixed(
-        2
-      )} USD</b></p>
-      <p>Parte justa por hermano: <b>${s.equalShare.toFixed(2)} USD</b></p>
-    </div>
-
-    <h2 class="section-title">Movimientos - Emilse</h2>
-    ${tablaMovimientos(s.movsEmilse)}
-
-    <h2 class="section-title">Movimientos - Depto Gerardo</h2>
-    ${tablaMovimientos(s.movsDepto)}
+    <h2 class="section-title">Movimientos recientes</h2>
+    ${recientes}
   `;
 
-  res.send(renderPage({ title: "Panel hermanos", content }));
+  res.send(renderPage({ title: "Hermanos", content }));
 });
+
 
 // ---- PANEL ADMIN ----
 app.get("/admin", (req, res) => {
@@ -590,7 +534,7 @@ app.get("/admin", (req, res) => {
                   ? "Galicia"
                   : m.bank === "FRANCES"
                   ? "Francés"
-                  : m.bank
+                  : "Efectivo"
                 : "-";
 
               return `
@@ -619,14 +563,16 @@ app.get("/admin", (req, res) => {
   const bankCards = Object.entries(s.bankBalances)
     .map(([bank, bal]) => {
       const niceName =
-        bank === "GALICIA" ? "Banco Galicia" : bank === "FRANCES" ? "Banco Francés" : bank;
+        bank === "GALICIA"
+          ? "Banco Galicia"
+          : bank === "FRANCES"
+          ? "Banco Francés"
+          : "Efectivo";
       const cls = bal > 0 ? "positive" : bal < 0 ? "negative" : "neutral";
       return `
         <div class="card">
           <h3>${niceName}</h3>
-          <div class="amount ${cls}">${bal.toFixed(
-            2
-          )} ARS</div>
+          <div class="amount ${cls}">${bal.toFixed(2)} ARS</div>
           <p class="small">Saldo estimado con todos los movimientos, incluyendo transferencias y ajustes.</p>
         </div>`;
     })
@@ -661,6 +607,11 @@ app.get("/admin", (req, res) => {
     </div>
 
     <h2 class="section-title">Nuevo movimiento</h2>
+    <div class="card">
+      <p class="small"><b>Normal</b>: uso real del pozo (aportes, gastos de Emilse, depto).</p>
+      <p class="small"><b>Transfer</b>: mueve saldos entre Galicia / Francés / Efectivo sin cambiar el pozo.</p>
+      <p class="small"><b>Ajuste</b>: corrige el saldo registrado de un banco específico.</p>
+    </div>
     <form class="form-box" method="POST" action="/admin/movements">
       <div class="form-row">
         <div class="form-field">
@@ -693,9 +644,9 @@ app.get("/admin", (req, res) => {
         <div class="form-field">
           <label>Tipo de movimiento</label>
           <select name="movement_kind" id="movement_kind" required>
-            <option value="NORMAL" selected>Normal (afecta pozo y hermanos)</option>
-            <option value="TRANSFER">Movimiento entre cuentas (no afecta hermanos)</option>
-            <option value="ADJUST">Ajuste de cuenta (solo corrige saldo banco)</option>
+            <option value="NORMAL" selected>Normal (aportes o gastos reales)</option>
+            <option value="TRANSFER">Mover dinero entre bancos (no afecta pozo)</option>
+            <option value="ADJUST">Ajuste de saldo de un banco</option>
           </select>
         </div>
         <div class="form-field">
@@ -704,6 +655,7 @@ app.get("/admin", (req, res) => {
             <option value="">-- Sin banco / efectivo --</option>
             <option value="GALICIA">Galicia</option>
             <option value="FRANCES">Francés</option>
+            <option value="EFECTIVO">Efectivo</option>
           </select>
         </div>
         <div class="form-field">
@@ -712,6 +664,7 @@ app.get("/admin", (req, res) => {
             <option value="">-- Seleccionar --</option>
             <option value="GALICIA">Galicia</option>
             <option value="FRANCES">Francés</option>
+            <option value="EFECTIVO">Efectivo</option>
           </select>
         </div>
         <div class="form-field">
@@ -720,6 +673,7 @@ app.get("/admin", (req, res) => {
             <option value="">-- Seleccionar --</option>
             <option value="GALICIA">Galicia</option>
             <option value="FRANCES">Francés</option>
+            <option value="EFECTIVO">Efectivo</option>
           </select>
         </div>
       </div>
