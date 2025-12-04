@@ -43,6 +43,44 @@ const baseStyles = `
       padding-left:10px; color:#333;
     }
 
+            .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      margin-top: 20px;
+      margin-bottom: 24px;
+    }
+
+    .chart-card {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.06);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .chart-card h3 {
+      margin-top: 0;
+      font-size: 1rem;
+      margin-bottom: 8px;
+    }
+
+    .chart-wrapper {
+      position: relative;
+      width: 100%;
+      height: 220px;
+    }
+
+    @media (min-width: 992px) {
+      .chart-wrapper {
+        height: 260px;
+      }
+    }
+
+
+
     .cards {
       display:flex; flex-wrap:wrap; gap:16px;
     }
@@ -121,6 +159,16 @@ const baseStyles = `
     .bar-positive-h { background:#2e7d32; }
     .bar-negative-h { background:#c62828; }
     .bar-zero-h { background:#9e9e9e; }
+    .chart-small {
+  width: 260px;
+  height: 260px;
+  margin: 0 auto;
+}
+.chart-small canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
   </style>
 `;
 
@@ -130,14 +178,17 @@ const db = new Database(dbFile);
 db.pragma("journal_mode = WAL");
 
 function initDb() {
-  db.prepare(`
+  db.prepare(
+    `
     CREATE TABLE IF NOT EXISTS contributors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT UNIQUE NOT NULL
     )
-  `).run();
+  `
+  ).run();
 
-  db.prepare(`
+  db.prepare(
+    `
     CREATE TABLE IF NOT EXISTS movements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       date TEXT NOT NULL,
@@ -154,7 +205,8 @@ function initDb() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (contributor_id) REFERENCES contributors(id)
     )
-  `).run();
+  `
+  ).run();
 
   // Por si la tabla ya existía antes de movement_kind / bank
   try {
@@ -166,7 +218,9 @@ function initDb() {
     db.prepare(`ALTER TABLE movements ADD COLUMN bank TEXT`).run();
   } catch (e) {}
 
-  const ins = db.prepare("INSERT OR IGNORE INTO contributors (name) VALUES (?)");
+  const ins = db.prepare(
+    "INSERT OR IGNORE INTO contributors (name) VALUES (?)"
+  );
   ["Gerardo", "Néstor", "Leandro", "Emilse"].forEach((n) => ins.run(n));
 }
 initDb();
@@ -177,15 +231,18 @@ function getContributors() {
 
 function getMovements() {
   // Más reciente primero
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT m.*, c.name AS contributor_name
     FROM movements m
     JOIN contributors c ON c.id = m.contributor_id
     ORDER BY date DESC, m.id DESC
-  `).all();
+  `
+    )
+    .all();
 }
 
-// ---- CÁLCULO RESUMEN ----
 function computeSummary() {
   const contributors = getContributors();
   const movements = getMovements();
@@ -215,9 +272,17 @@ function computeSummary() {
   };
 
   let totalGastosEmilse = 0;
+
+  // NUEVO: gastos del depto de Gerardo
+  let totalGastosDeptoUsd = 0;
+  let totalGastosDeptoArs = 0;
+
+  // Uso del pozo para gastos de Emilse
   const usoEmilse = {
     fromEmilse: 0,
     fromBrothers: 0,
+    fromEmilseArs: 0,
+    fromBrothersArs: 0,
     perBrother: {},
   };
 
@@ -229,6 +294,7 @@ function computeSummary() {
   for (const m of sortedMovs) {
     const kind = m.movement_kind || "NORMAL";
 
+    // Siempre actualizamos saldos por banco (incluye TRANSFER / ADJUST)
     if (m.bank) {
       const bankKey = m.bank.toUpperCase();
       if (!bankBalances[bankKey]) bankBalances[bankKey] = 0;
@@ -236,45 +302,67 @@ function computeSummary() {
       bankBalances[bankKey] += sign * m.amount_local;
     }
 
+    // Solo los movimientos NORMAL afectan el pozo entre personas
     if (kind !== "NORMAL") continue;
 
     const usd = m.amount_usd;
+    const ars = m.amount_local;
 
+    // 1) APORTES (IN): acá se construye el "total aportado histórico"
     if (m.direction === "IN") {
       aporteUsd[m.contributor_id] += usd;
-      aportePesos[m.contributor_id] += m.amount_local;
+      aportePesos[m.contributor_id] += ars;
       balanceUsd[m.contributor_id] += usd;
       continue;
     }
 
+    // 2) GASTOS EMILSE
     if (m.direction === "OUT" && m.category === "EMILSE") {
       totalGastosEmilse += usd;
 
-      let restante = usd;
+      let restanteUsd = usd;
+      let restanteArs = ars;
 
+      // Primero consume saldo de Emilse
       if (emilseId) {
-        const disponibleEmilse = Math.max(balanceUsd[emilseId], 0);
-        const usaEmilse = Math.min(disponibleEmilse, restante);
-        balanceUsd[emilseId] -= usaEmilse;
-        restante -= usaEmilse;
-        usoEmilse.fromEmilse += usaEmilse;
+        const disponibleEmilseUsd = Math.max(balanceUsd[emilseId], 0);
+        const usaEmilseUsd = Math.min(disponibleEmilseUsd, restanteUsd);
+        const proporEmilse = usd > 0 ? usaEmilseUsd / usd : 0;
+        const usaEmilseArs = ars * proporEmilse;
+
+        balanceUsd[emilseId] -= usaEmilseUsd;
+        restanteUsd -= usaEmilseUsd;
+        restanteArs -= usaEmilseArs;
+
+        usoEmilse.fromEmilse += usaEmilseUsd;
+        usoEmilse.fromEmilseArs += usaEmilseArs;
       }
 
-      if (restante > 0 && hermanos.length > 0) {
-        const parte = restante / hermanos.length;
+      // Luego, lo que falta lo ponen los hermanos
+      if (restanteUsd > 0 && hermanos.length > 0) {
+        const parteUsd = restanteUsd / hermanos.length;
+        const parteArs = restanteArs / hermanos.length;
+
         hermanos.forEach((h) => {
-          balanceUsd[h.id] -= parte;
-          usoEmilse.fromBrothers += parte;
-          usoEmilse.perBrother[h.id] = (usoEmilse.perBrother[h.id] || 0) + parte;
+          balanceUsd[h.id] -= parteUsd;
+          usoEmilse.fromBrothers += parteUsd;
+          usoEmilse.fromBrothersArs += parteArs;
+          usoEmilse.perBrother[h.id] =
+            (usoEmilse.perBrother[h.id] || 0) + parteUsd;
         });
       }
+
       continue;
     }
 
+    // 3) GASTOS DEPARTAMENTO GERARDO (SOLO LE PEGAN A ÉL)
     if (m.direction === "OUT" && m.category === "DEPTO" && gerardoId) {
+      totalGastosDeptoUsd += usd;
+      totalGastosDeptoArs += ars;
+
+      // 🔹 SOLO afecta el saldo actual, no el total histórico aportado
       balanceUsd[gerardoId] -= usd;
-      aporteUsd[gerardoId] -= usd;
-      aportePesos[gerardoId] -= m.amount_local;
+      continue;
     }
   }
 
@@ -302,7 +390,7 @@ function computeSummary() {
   return {
     contributors,
     movements,
-    aportNet: aporteUsd,
+    aportNet: aporteUsd, // ahora es "total aportado histórico"
     aportePesos,
     resumenHermanos,
     balanceUsd,
@@ -310,6 +398,8 @@ function computeSummary() {
     hermanosBalanceUsd,
     totalPozoUsd: emilseBalanceUsd + hermanosBalanceUsd,
     totalGastosEmilse,
+    totalGastosDeptoUsd,
+    totalGastosDeptoArs,
     usoEmilse,
     movsEmilse: movements.filter((m) => m.category === "EMILSE"),
     movsDepto: movements.filter((m) => m.category === "DEPTO"),
@@ -348,26 +438,35 @@ function renderPage({ title, content }) {
 app.get("/", (req, res) => {
   const s = computeSummary();
 
-  const totalPozoUsd = s.totalPozoUsd;
-  const cardsBalances = s.contributors
-    .map((c) => {
-      const balUsd = s.balanceUsd[c.id] || 0;
-      const aportUsd = s.aportNet[c.id] || 0;
-      const aportArs = s.aportePesos[c.id] || 0;
-      const rate = aportUsd > 0 ? aportArs / aportUsd : 0;
-      const balArs = balUsd * rate;
-      const cls = balUsd > 0 ? "positive" : balUsd < 0 ? "negative" : "neutral";
-      const rateTxt = rate > 0 ? `${rate.toFixed(2)} ARS/USD promedio` : "Sin TC estimado";
-      return `
-        <div class="card">
-          <h3>${c.name}</h3>
-          <div class="amount ${cls}">${balUsd.toFixed(2)} USD</div>
-          <p class="small">Saldo estimado en ARS: ${balArs.toFixed(2)}<br/>${rateTxt}</p>
-          <p class="small">Aportes netos: ${aportUsd.toFixed(2)} USD (${aportArs.toFixed(2)} ARS)</p>
-        </div>`;
-    })
-    .join("");
 
+  // Pozo según bancos: suma de Galicia + Francés + Efectivo
+const totalPozoBancosArs = Object.values(s.bankBalances).reduce(
+  (acc, val) => acc + (val || 0),
+  0
+);
+
+
+
+
+  const gerardo = s.contributors.find((c) => c.name === "Gerardo");
+  const nestor = s.contributors.find((c) => c.name === "Néstor");
+  const leandro = s.contributors.find((c) => c.name === "Leandro");
+  const emilse = s.contributors.find((c) => c.name === "Emilse");
+
+  const gerardoId = gerardo?.id;
+  const nestorId = nestor?.id;
+  const leandroId = leandro?.id;
+  const emilseId = emilse?.id;
+
+  const aporteGerardoArs = gerardoId ? s.aportePesos[gerardoId] || 0 : 0;
+  const aporteNestorArs = nestorId ? s.aportePesos[nestorId] || 0 : 0;
+  const aporteLeandroArs = leandroId ? s.aportePesos[leandroId] || 0 : 0;
+  const aporteEmilseArs = emilseId ? s.aportePesos[emilseId] || 0 : 0;
+
+  const gastosDeptoArs = s.totalGastosDeptoArs || 0;
+  const aporteGerardoNetoArs = aporteGerardoArs - gastosDeptoArs;
+
+  // ---- Saldos por banco ----
   const bankCards = Object.entries(s.bankBalances)
     .map(([bank, bal]) => {
       const niceName =
@@ -386,14 +485,7 @@ app.get("/", (req, res) => {
     })
     .join("");
 
-  const usoHermanos = Object.entries(s.usoEmilse.perBrother)
-    .map(([id, val]) => {
-      const hermano = s.contributors.find((c) => c.id === Number(id));
-      const nombre = hermano ? hermano.name : "Hermano";
-      return `<li>${nombre}: ${val.toFixed(2)} USD</li>`;
-    })
-    .join("") || "<li>No hubo gastos cargados a hermanos</li>";
-
+  // ---- Tabla de movimientos recientes ----
   const tablaMovimientos = (movs) =>
     movs.length === 0
       ? "<p class='small'>No hay movimientos registrados.</p>"
@@ -447,39 +539,295 @@ app.get("/", (req, res) => {
         </tbody>
       </table>`;
 
-  const recientes = tablaMovimientos(s.movements.slice(0, 15));
+  const recientes = tablaMovimientos(s.movements);
+
+  // ---- Datos para los 4 gráficos (todas barras en ARS) ----
+
+  // 1) Arriba izquierda: barras con total aportado por cada uno (ARS)
+  const aportesTotalesLabels = s.contributors.map((c) => c.name);
+  const aportesTotalesDataArs = s.contributors.map((c) =>
+    Math.max(s.aportePesos[c.id] || 0, 0)
+  );
+
+  // 2) Arriba derecha: barras - Aportes Gerardo vs Gastos Depto (ARS)
+  const gerardoDeptoLabels = ["Aportes Gerardo", "Gastos Depto"];
+  const gerardoDeptoData = [
+    Math.max(aporteGerardoArs, 0),
+    Math.max(gastosDeptoArs, 0),
+  ];
+
+  // 3) Abajo izquierda: barras - quién cubrió gastos de Emilse (ARS)
+  const gastosEmilseLabels = ["Cubierto por Emilse", "Cubierto por hermanos"];
+  const gastosEmilseData = [
+    Math.max(s.usoEmilse.fromEmilseArs || 0, 0),
+    Math.max(s.usoEmilse.fromBrothersArs || 0, 0),
+  ];
+
+  // 4) Abajo derecha: barras - aporte efectivo al fondo (hermanos, ARS)
+  const aportesEfectivosLabels = ["Gerardo neto", "Néstor", "Leandro"];
+  const aportesEfectivosData = [
+    Math.max(aporteGerardoNetoArs, 0),
+    Math.max(aporteNestorArs, 0),
+    Math.max(aporteLeandroArs, 0),
+  ];
 
   const content = `
-    <h2 class="section-title">Pozo actual</h2>
-    <div class="cards">
-      <div class="card">
-        <h3>Saldo total</h3>
-        <div class="amount neutral">${totalPozoUsd.toFixed(2)} USD</div>
-        <p class="small">Emilse: ${s.emilseBalanceUsd.toFixed(2)} USD</p>
-        <p class="small">Hermanos: ${s.hermanosBalanceUsd.toFixed(2)} USD</p>
+    <h2 class="section-title">Resumen visual de aportes y gastos</h2>
+    <div class="dashboard-grid">
+      <div class="chart-card">
+        <h3>Total aportado al pozo (histórico, ARS)</h3>
+        <p class="small">Incluye aportes de Gerardo, Néstor, Leandro y Emilse.</p>
+        <div class="chart-wrapper">
+          <canvas id="aportesTotalesChart"></canvas>
+        </div>
       </div>
-      <div class="card">
-        <h3>Gastos de Emilse</h3>
-        <div class="amount negative">${s.totalGastosEmilse.toFixed(2)} USD</div>
-        <p class="small">Cubierto con reservas de Emilse: ${s.usoEmilse.fromEmilse.toFixed(2)} USD</p>
-        <p class="small">Cubierto por hermanos: ${s.usoEmilse.fromBrothers.toFixed(2)} USD</p>
-        <ul class="small">${usoHermanos}</ul>
-      </div>
-    </div>
 
-    <h2 class="section-title">Saldos individuales (pozo + ajustes)</h2>
-    <div class="cards">${cardsBalances}</div>
+      <div class="chart-card">
+        <h3>Gerardo: aportes vs gastos de departamento (ARS)</h3>
+        <p class="small">
+          Aportes Gerardo: ${aporteGerardoArs.toFixed(2)} ARS<br/>
+          Gastos Depto: ${gastosDeptoArs.toFixed(2)} ARS
+        </p>
+        <div class="chart-wrapper">
+          <canvas id="gerardoDeptoChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <h3>Quién cubrió los gastos de Emilse (ARS)</h3>
+        <p class="small">
+          Se muestra cuánto se cubrió con el propio pozo de Emilse y cuánto con el pozo de los hermanos.
+        </p>
+        <div class="chart-wrapper">
+          <canvas id="gastosEmilseChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <h3>Aporte efectivo al fondo común (hermanos, ARS)</h3>
+        <p class="small">
+          Gerardo neto = aportes - gastos de depto.
+        </p>
+        <div class="chart-wrapper">
+          <canvas id="aportesEfectivosChart"></canvas>
+        </div>
+      </div>
+
+</div>
+
+
+    <h2 class="section-title">Pozo actual</h2>
+<div class="cards">
+  <div class="card">
+    <h3>Saldo total en bancos</h3>
+    <div class="amount neutral">${totalPozoBancosArs.toFixed(2)} ARS</div>
+    <p class="small">
+      Suma de saldos: Galicia + Francés + Efectivo.
+    </p>
+  </div>
+</div>
 
     <h2 class="section-title">Saldos por banco</h2>
     <div class="cards">${bankCards}</div>
 
     <h2 class="section-title">Movimientos recientes</h2>
     ${recientes}
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+      (function () {
+        // Paleta básica
+        var baseColors = [
+          'rgba(33, 150, 243, 0.9)',
+          'rgba(76, 175, 80, 0.9)',
+          'rgba(255, 193, 7, 0.9)',
+          'rgba(244, 67, 54, 0.9)'
+        ];
+
+        // 1) Barras total aportado
+        var ctx1 = document.getElementById('aportesTotalesChart');
+        var labels1 = ${JSON.stringify(aportesTotalesLabels)};
+        var data1 = ${JSON.stringify(aportesTotalesDataArs)};
+        if (ctx1 && data1.reduce((a, b) => a + b, 0) > 0) {
+          new Chart(ctx1, {
+            type: 'bar',
+            data: {
+              labels: labels1,
+              datasets: [{
+                data: data1,
+                backgroundColor: labels1.map(function(_, i) {
+                  return baseColors[i % baseColors.length];
+                }),
+                borderRadius: 8
+              }]
+            },
+            options: {
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: {
+                    label: function(context) {
+                      var val = context.parsed.y || 0;
+                      return val.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
+                    }
+                  }
+                }
+              },
+              scales: {
+                y: {
+                  beginAtZero: true,
+                  ticks: {
+                    callback: function(value) {
+                      return value.toLocaleString('es-AR');
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+
+        // 2) Barras horizontales Gerardo vs Depto
+        var ctx2 = document.getElementById('gerardoDeptoChart');
+        var labels2 = ${JSON.stringify(gerardoDeptoLabels)};
+        var data2 = ${JSON.stringify(gerardoDeptoData)};
+        if (ctx2 && data2.reduce((a, b) => a + b, 0) > 0) {
+          new Chart(ctx2, {
+            type: 'bar',
+            data: {
+              labels: labels2,
+              datasets: [{
+                data: data2,
+                backgroundColor: [
+                  'rgba(33, 150, 243, 0.9)',
+                  'rgba(244, 67, 54, 0.9)'
+                ],
+                borderRadius: 8
+              }]
+            },
+            options: {
+              indexAxis: 'y',
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: {
+                    label: function(context) {
+                      var val = context.parsed.x || 0;
+                      return val.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
+                    }
+                  }
+                }
+              },
+              scales: {
+                x: {
+                  beginAtZero: true,
+                  ticks: {
+                    callback: function(value) {
+                      return value.toLocaleString('es-AR');
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+
+        // 3) Barras horizontales gastos Emilse
+        var ctx3 = document.getElementById('gastosEmilseChart');
+        var labels3 = ${JSON.stringify(gastosEmilseLabels)};
+        var data3 = ${JSON.stringify(gastosEmilseData)};
+        if (ctx3 && data3.reduce((a, b) => a + b, 0) > 0) {
+          new Chart(ctx3, {
+            type: 'bar',
+            data: {
+              labels: labels3,
+              datasets: [{
+                data: data3,
+                backgroundColor: [
+                  'rgba(76, 175, 80, 0.9)',
+                  'rgba(255, 193, 7, 0.9)'
+                ],
+                borderRadius: 8
+              }]
+            },
+            options: {
+              indexAxis: 'y',
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: {
+                    label: function(context) {
+                      var val = context.parsed.x || 0;
+                      return val.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
+                    }
+                  }
+                }
+              },
+              scales: {
+                x: {
+                  beginAtZero: true,
+                  ticks: {
+                    callback: function(value) {
+                      return value.toLocaleString('es-AR');
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+
+        // 4) Barras aporte efectivo hermanos
+        var ctx4 = document.getElementById('aportesEfectivosChart');
+        var labels4 = ${JSON.stringify(aportesEfectivosLabels)};
+        var data4 = ${JSON.stringify(aportesEfectivosData)};
+        if (ctx4 && data4.reduce((a, b) => a + b, 0) > 0) {
+          new Chart(ctx4, {
+            type: 'bar',
+            data: {
+              labels: labels4,
+              datasets: [{
+                data: data4,
+                backgroundColor: [
+                  'rgba(33, 150, 243, 0.9)',
+                  'rgba(76, 175, 80, 0.9)',
+                  'rgba(255, 193, 7, 0.9)'
+                ],
+                borderRadius: 8
+              }]
+            },
+            options: {
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: {
+                    label: function(context) {
+                      var val = context.parsed.y || 0;
+                      return val.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
+                    }
+                  }
+                }
+              },
+              scales: {
+                y: {
+                  beginAtZero: true,
+                  ticks: {
+                    callback: function(value) {
+                      return value.toLocaleString('es-AR');
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+      })();
+    </script>
   `;
 
   res.send(renderPage({ title: "Hermanos", content }));
 });
-
 
 // ---- PANEL ADMIN ----
 app.get("/admin", (req, res) => {
@@ -811,13 +1159,17 @@ app.post("/admin/movements", (req, res) => {
     if (!bank_from || !bank_to || bank_from === bank_to) {
       return res
         .status(400)
-        .send("Para una transferencia indicá banco origen y destino distintos.");
+        .send(
+          "Para una transferencia indicá banco origen y destino distintos."
+        );
     }
 
     const contributors = getContributors();
     const emilse = contributors.find((c) => c.name === "Emilse");
     if (!emilse) {
-      return res.status(500).send("No se encontró a Emilse como contribuyente.");
+      return res
+        .status(500)
+        .send("No se encontró a Emilse como contribuyente.");
     }
     const emilseId = emilse.id;
 
